@@ -51,6 +51,7 @@ def anndata_dict(random_adata, rng):
         ("covariates_obs_key", "covar"),
         ("covariates_obsm_key", None),
         ("covariates_obsm_key", "covar"),
+        ("guiding_vars_obs_keys", {"gvar1": "gvar_normal", "gvar2": "gvar_bernoulli", "gvar3": "gvar_categorical"}),
         ("use_obs", "union"),
         ("use_obs", "intersection"),
         ("use_var", "union"),
@@ -87,7 +88,9 @@ def anndata_dict(random_adata, rng):
 def test_integration(anndata_dict, tmp_path, attrname, attrvalue, usedask):
     opts = (
         DataOptions(plot_data_overview=False, annotations_varm_key="annot"),
-        ModelOptions(n_factors=5),
+        ModelOptions(
+            n_factors=5, guiding_vars_likelihoods={"gvar1": "Normal", "gvar2": "Bernoulli", "gvar3": "Categorical"}
+        ),
         TrainingOptions(max_epochs=2, seed=42, save_path=False),
     )
     if attrname == "save_path" and isinstance(attrvalue, str):
@@ -100,7 +103,9 @@ def test_integration(anndata_dict, tmp_path, attrname, attrvalue, usedask):
         model = MOFAFLEX(anndata_dict, *opts)
 
     if attrname == "weight_prior" and attrvalue == "Horseshoe":
-        assert model.n_informed_factors > 0
+        assert (model.n_informed_factors > 0) | (model._n_guiding_vars > 0)
+    elif attrname == "guiding_vars_obs_keys":
+        assert model._n_guiding_vars == 3
     else:
         assert model.n_factors == model.n_dense_factors == 5
 
