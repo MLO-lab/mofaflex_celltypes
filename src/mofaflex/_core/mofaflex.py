@@ -1270,8 +1270,7 @@ class MOFAFLEX:
                         minibatch = gdata[start_idx:end_idx]
 
                         gp_dist = self._gp(
-                            gidx.expand(minibatch.shape[0], 1),
-                            torch.as_tensor(minibatch, dtype=torch.float32),
+                            (gidx.expand(minibatch.shape[0], 1), torch.as_tensor(minibatch, dtype=torch.float32)),
                             prior=False,
                         )
 

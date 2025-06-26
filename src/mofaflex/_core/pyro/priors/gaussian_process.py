@@ -65,20 +65,13 @@ class GP(Prior):
         covariates: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, torch.Tensor]:
-        # Inducing values p(u)
-        prior_distribution = self._gp.variational_strategy.prior_distribution
-        prior_distribution = prior_distribution.to_event(len(prior_distribution.batch_shape))
-        pyro.sample("gp.u", prior_distribution)
-
-        # Draw samples from p(f)
         gnames = list(filter(lambda x: x in covariates, self._names))
         covars = torch.cat(tuple(covariates[g] for g in gnames), dim=0)
         idx = torch.cat(tuple(self._get_idx(g).expand(covariates[g].shape[0]) for g in gnames), dim=0)
-        f_dist = self._gp(idx[..., None], covars, prior=True)
-        f_dist = dist.Normal(loc=f_dist.mean, scale=f_dist.stddev).to_event(len(f_dist.event_shape) - 1)
+        f_dist = self._gp.pyro_model((idx[..., None], covars), name_prefix="gp")
 
         with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
-            f = pyro.sample("gp.f", f_dist.mask(False)).reshape(self._full_gp_shape)
+            f = pyro.sample("gp.f", f_dist).reshape(self._full_gp_shape)
 
         outputscale = self._gp.outputscale.reshape(self._gp_shape)
 
@@ -115,19 +108,13 @@ class GP(Prior):
         subsample = torch.cat(subsample)
         gp_nonfactor_plate = pyro.plate("gp_nonfactors", offset, dim=nonfactor_dim, subsample=subsample)
 
-        # Inducing values q(u)
-        variational_distribution = self._gp.variational_strategy.variational_distribution
-        variational_distribution = variational_distribution.to_event(len(variational_distribution.batch_shape))
-        pyro.sample("gp.u", variational_distribution)
-
         gnames = list(filter(lambda x: x in covariates, self._names))
         covars = torch.cat(tuple(covariates[g] for g in gnames), dim=0)
         idx = torch.cat(tuple(self._get_idx(g).expand(covariates[g].shape[0]) for g in gnames), dim=0)
+        f_dist = self._gp.pyro_guide((idx[..., None], covars), name_prefix="gp")
+
         with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
-            # Draw samples from q(f)
-            f_dist = self._gp(idx[..., None], covars, prior=False)
-            f_dist = dist.Normal(f_dist.mean, f_dist.stddev).to_event(len(f_dist.event_shape) - 1)
-            pyro.sample("gp.f", f_dist.mask(False))
+            pyro.sample("gp.f", f_dist)
 
         with factor_plate, gp_nonfactor_plate as index:
             return dict(
