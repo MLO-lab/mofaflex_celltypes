@@ -41,8 +41,10 @@ class GP(Prior):
         shape = [1] * ndims
         shape[factor_dim] = n_factors
         self._gp_shape = tuple(shape)
-        n_gp_samples = sum(n_nonfactors[g] for g in self._names)
-        shape[nonfactor_dim] = n_gp_samples
+
+        shape = [1] * ndims
+        shape[min(factor_dim, nonfactor_dim)] = n_factors
+        shape[max(factor_dim, nonfactor_dim)] = -1
         self._full_gp_shape = tuple(shape)
 
         if init_tensor is not None:
@@ -83,12 +85,14 @@ class GP(Prior):
         idx = torch.cat(tuple(self._get_idx(g).expand(covariates[g].shape[0]) for g in gnames), dim=0)
         f_dist = self._gp.pyro_model((idx[..., None], covars), name_prefix="gp")
 
+        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
         with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
             f = pyro.sample("gp.f", f_dist).reshape(self._full_gp_shape)
+        if factor_plate.dim > nonfactor_plate.dim:
+            f = f.swapaxes(factor_plate.dim, nonfactor_plate.dim)
 
         outputscale = self._gp.outputscale.reshape(self._gp_shape)
 
-        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
         with factor_plate, nonfactor_plate:
             return dict(
                 zip(
@@ -115,10 +119,10 @@ class GP(Prior):
         idx = torch.cat(tuple(self._get_idx(g).expand(covariates[g].shape[0]) for g in gnames), dim=0)
         f_dist = self._gp.pyro_guide((idx[..., None], covars), name_prefix="gp")
 
+        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
         with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
             pyro.sample("gp.f", f_dist)
 
-        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
         with factor_plate, nonfactor_plate as index:
             return dict(
                 zip(
