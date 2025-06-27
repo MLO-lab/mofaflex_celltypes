@@ -26,15 +26,13 @@ Python installed, we recommend installing [Micromamba](https://mamba.readthedocs
 
 There are several alternative options to install MOFA-FLEX:
 
-<!--
-1) Install the latest release of MOFA-FLEX from [PyPI][]:
+1. Install the latest release of MOFA-FLEX from [PyPI][]:
 
 ```bash
 pip install mofaflex
 ```
--->
 
-1. Install the latest development version:
+2. Install the latest development version:
 
 ```bash
 pip install git+https://github.com/bioFAM/mofaflex.git@main
