@@ -172,7 +172,8 @@ class GP(ApproximateGP):
     def group_corr(self):
         return self._covar_module.group_corr
 
-    def __call__(self, group_idx: torch.Tensor | None, inputs: torch.Tensor | None, prior: bool = False, **kwargs):
+    def __call__(self, input: tuple[torch.Tensor | None, torch.Tensor | None], prior: bool = False, **kwargs):
+        group_idx, inputs = input
         if group_idx is not None and inputs is not None:
             inputs = torch.cat((group_idx, inputs), dim=-1)
         return super().__call__(inputs, prior, **kwargs)

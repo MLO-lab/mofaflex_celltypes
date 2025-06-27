@@ -57,6 +57,19 @@ class GP(Prior):
     def _get_idx(self, group_name: str):
         return getattr(self, f"_idx_{group_name}")
 
+    def _get_nonfactor_plate(self, nonfactor_plates: Mapping[str, pyro.plate]) -> pyro.plate:
+        """Make combined sample plate."""
+        offset = 0
+        subsample = []
+        nonfactor_dim = None
+        for name in self._names:
+            splate = nonfactor_plates[name]
+            subsample.append(splate.indices + offset)
+            offset += splate.size
+            nonfactor_dim = splate.dim
+        subsample = torch.cat(subsample)
+        return pyro.plate("gp_nonfactors", offset, dim=nonfactor_dim, subsample=subsample)
+
     @pyro_method
     def model(
         self,
@@ -65,24 +78,18 @@ class GP(Prior):
         covariates: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, torch.Tensor]:
-        # Inducing values p(u)
-        prior_distribution = self._gp.variational_strategy.prior_distribution
-        prior_distribution = prior_distribution.to_event(len(prior_distribution.batch_shape))
-        pyro.sample("gp.u", prior_distribution)
-
-        # Draw samples from p(f)
         gnames = list(filter(lambda x: x in covariates, self._names))
         covars = torch.cat(tuple(covariates[g] for g in gnames), dim=0)
         idx = torch.cat(tuple(self._get_idx(g).expand(covariates[g].shape[0]) for g in gnames), dim=0)
-        f_dist = self._gp(idx[..., None], covars, prior=True)
-        f_dist = dist.Normal(loc=f_dist.mean, scale=f_dist.stddev).to_event(len(f_dist.event_shape) - 1)
+        f_dist = self._gp.pyro_model((idx[..., None], covars), name_prefix="gp")
 
         with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
-            f = pyro.sample("gp.f", f_dist.mask(False)).reshape(self._full_gp_shape)
+            f = pyro.sample("gp.f", f_dist).reshape(self._full_gp_shape)
 
         outputscale = self._gp.outputscale.reshape(self._gp_shape)
 
-        with factor_plate:
+        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
+        with factor_plate, nonfactor_plate:
             return dict(
                 zip(
                     self._names,
@@ -103,33 +110,16 @@ class GP(Prior):
         covariates: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, torch.Tensor]:
-        # make combined sample plate
-        offset = 0
-        subsample = []
-        nonfactor_dim = None
-        for name in self._names:
-            splate = nonfactor_plates[name]
-            subsample.append(splate.indices + offset)
-            offset += splate.size
-            nonfactor_dim = splate.dim
-        subsample = torch.cat(subsample)
-        gp_nonfactor_plate = pyro.plate("gp_nonfactors", offset, dim=nonfactor_dim, subsample=subsample)
-
-        # Inducing values q(u)
-        variational_distribution = self._gp.variational_strategy.variational_distribution
-        variational_distribution = variational_distribution.to_event(len(variational_distribution.batch_shape))
-        pyro.sample("gp.u", variational_distribution)
-
         gnames = list(filter(lambda x: x in covariates, self._names))
         covars = torch.cat(tuple(covariates[g] for g in gnames), dim=0)
         idx = torch.cat(tuple(self._get_idx(g).expand(covariates[g].shape[0]) for g in gnames), dim=0)
-        with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
-            # Draw samples from q(f)
-            f_dist = self._gp(idx[..., None], covars, prior=False)
-            f_dist = dist.Normal(f_dist.mean, f_dist.stddev).to_event(len(f_dist.event_shape) - 1)
-            pyro.sample("gp.f", f_dist.mask(False))
+        f_dist = self._gp.pyro_guide((idx[..., None], covars), name_prefix="gp")
 
-        with factor_plate, gp_nonfactor_plate as index:
+        with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
+            pyro.sample("gp.f", f_dist)
+
+        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
+        with factor_plate, nonfactor_plate as index:
             return dict(
                 zip(
                     self._names,
@@ -137,8 +127,8 @@ class GP(Prior):
                         pyro.sample(
                             "z",
                             dist.Normal(
-                                self._loc.index_select(gp_nonfactor_plate.dim, index),
-                                self._scale.index_select(gp_nonfactor_plate.dim, index),
+                                self._loc.index_select(nonfactor_plate.dim, index),
+                                self._scale.index_select(nonfactor_plate.dim, index),
                             ),
                         ),
                         tuple(covariates[g].shape[0] for g in gnames),
