@@ -353,19 +353,9 @@ class MofaFlexModel(PyroModule):
     def get_lr_func(self, base_lr: float, **kwargs):
         modifiers = {}
         for i, prior in enumerate(self._weights):
-            modifiers.update(
-                {
-                    f"{__class__.__name__}._weights.{i}.{pname}": mod
-                    for pname, mod in prior.learning_rate_multipliers.items()
-                }
-            )
+            modifiers.update({f"_weights.{i}.{pname}": mod for pname, mod in prior.learning_rate_multipliers.items()})
         for i, prior in enumerate(self._factors):
-            modifiers.update(
-                {
-                    f"{__class__.__name__}._factors.{i}.{pname}": mod
-                    for pname, mod in prior.learning_rate_multipliers.items()
-                }
-            )
+            modifiers.update({f"_factors.{i}.{pname}": mod for pname, mod in prior.learning_rate_multipliers.items()})
 
         def lr_func(param_name):
             return dict(lr=base_lr * modifiers.get(param_name, 1), **kwargs)
