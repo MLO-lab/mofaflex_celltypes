@@ -146,8 +146,10 @@ class ModelOptions(_Options):
     nonnegative_factors: dict[str, bool] | bool = False
     """Non-negativity constraints for factors for each group (if dict) or for all groups (if bool)."""
 
-    prior_penalty: float = 0.01
-    """Prior penalty for annotations."""  # TODO: add more detail
+    annotation_confidence: float = 0.99
+    """Confidence in the provided feature annotation. Must be between 0 and 1. Smaller values make the model more likely to
+        add features to the annotated pathways during training, while larger values encourage the model to more closely adhere
+        to the provided annotations."""
 
     init_factors: float | Literal["random", "orthogonal", "pca"] = "random"
     """Initialization method for factors."""
@@ -823,7 +825,7 @@ class MOFAFLEX:
                     self._annotations.get(
                         vn, np.broadcast_to(0, (self.n_informed_factors, self.n_features[vn]))
                     ).astype(np.float32)
-                    + self._model_opts.prior_penalty,
+                    + (1 - self._model_opts.annotation_confidence),
                     1e-8,
                     1.0,
                 )
