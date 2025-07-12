@@ -146,8 +146,10 @@ class ModelOptions(_Options):
     nonnegative_factors: dict[str, bool] | bool = False
     """Non-negativity constraints for factors for each group (if dict) or for all groups (if bool)."""
 
-    prior_penalty: float = 0.01
-    """Prior penalty for annotations."""  # TODO: add more detail
+    annotation_confidence: float = 0.99
+    """Confidence in the provided feature annotation. Must be between 0 and 1. Smaller values make the model more likely to
+        add features to the annotated pathways during training, while larger values encourage the model to more closely adhere
+        to the provided annotations."""
 
     init_factors: float | Literal["random", "orthogonal", "pca"] = "random"
     """Initialization method for factors."""
@@ -504,15 +506,7 @@ class MOFAFLEX:
                 ]
 
             prior_masks = {vn: vm.astype(np.bool_) for vn, vm in annotations.items()}
-            # add dense factors if necessary
-            n_guiding_vars = len(self._data_opts.guiding_vars_obs_keys) if self._data_opts.guiding_vars_obs_keys else 0
-            if n_dense_factors + n_guiding_vars > 0:
-                prior_masks = {
-                    vn: np.concatenate(
-                        (np.ones((n_dense_factors + n_guiding_vars, data.n_features[vn]), dtype=np.bool), vm), axis=0
-                    )
-                    for vn, vm in annotations.items()
-                }
+
         self._n_dense_factors = n_dense_factors
         self._n_informed_factors = n_informed_factors
         self._model_opts.n_factors = n_dense_factors + n_informed_factors
@@ -829,18 +823,28 @@ class MOFAFLEX:
             prior_scales = {
                 vn: np.clip(
                     self._annotations.get(
-                        vn, np.broadcast_to(0, (self.n_dense_factors + self.n_informed_factors, self.n_features[vn]))
+                        vn, np.broadcast_to(0, (self.n_informed_factors, self.n_features[vn]))
                     ).astype(np.float32)
-                    + self._model_opts.prior_penalty,
+                    + (1 - self._model_opts.annotation_confidence),
                     1e-8,
                     1.0,
                 )
                 for vn in self.view_names
             }
-            if self._n_dense_factors > 0:
-                dense_scale = 1.0
-                for scale in prior_scales.values():
-                    scale[: self._n_dense_factors, :] = dense_scale
+
+            if self.n_dense_factors + self.n_guided_factors > 0:
+                prior_scales = {
+                    vn: np.concatenate(
+                        (
+                            np.ones(
+                                (self.n_dense_factors + self.n_guided_factors, data.n_features[vn]), dtype=vm.dtype
+                            ),
+                            vm,
+                        ),
+                        axis=0,
+                    )
+                    for vn, vm in prior_scales.items()
+                }
 
         # guided factors
         guiding_vars_factors = {}
@@ -1290,10 +1294,11 @@ class MOFAFLEX:
             return_type: Format of the returned object.
             ordered: Whether to return the factors ordered by explained variance (highest to lowest).
         """
+        informed_factors = slice(self.n_dense_factors, self.n_dense_factors + self.n_informed_factors)
         annotations = {
-            k: pd.DataFrame(v, index=self.factor_names, columns=self.feature_names[k])
+            k: pd.DataFrame(v, index=self.factor_names[informed_factors], columns=self.feature_names[k])
             .astype(bool)
-            .iloc[self.factor_order if ordered else slice(None), :]
+            .iloc[np.argsort(np.argsort(self.factor_order[informed_factors])) if ordered else slice(None), :]
             for k, v in self._annotations.items()
         }
 
