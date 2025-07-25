@@ -39,6 +39,7 @@ def mdata(rng):
 
     adatas["view_0"].X = sparse.csr_array(adatas["view_0"].X)
     adatas["view_2"].X = sparse.csc_array(adatas["view_2"].X)
+    adatas["view_1"].var["highly_variable"] = rng.choice((True, False), size=nvar_per_mod, p=[0.4, 0.6])
 
     mdata = md.MuData(adatas)
 
@@ -58,27 +59,45 @@ def mdata(rng):
         global_annot, columns=[f"global_annot_{i}" for i in range(10)], index=mdata.var_names
     )
 
+    mdata.var["global_highly_variable"] = rng.choice((True, False), size=mdata.n_var, p=[0.3, 0.7])
+
     return mdata
 
 
+@pytest.fixture(scope="module", params=(None, "global_highly_variable", "highly_variable"))
+def subset_var(request):
+    return request.param
+
+
 @pytest.fixture(scope="module")
-def dataset(mdata):
-    return MofaFlexDataset(mdata, group_by="batch", cast_to=np.float32)
+def dataset(mdata, subset_var):
+    return MofaFlexDataset(mdata, group_by="batch", subset_var=subset_var, cast_to=np.float32)
+
+
+def get_varnames(mdata, modname, subset_var):
+    varnames = mdata.mod[modname].var_names
+    if subset_var in mdata.var:
+        varnames = varnames[mdata.var[subset_var][mdata.varmap[modname].reshape(-1) > 0]]
+    elif subset_var in mdata[modname].var:
+        varnames = varnames[mdata[modname].var[subset_var]]
+    return varnames
 
 
 def test_instance(dataset):
     assert isinstance(dataset, MuDataDataset)
 
 
-def test_properties(mdata, dataset):
+def test_properties(mdata, dataset, subset_var):
     for group_name, sample_names in dataset.sample_names.items():
         cmdata = mdata[mdata.obs["batch"] == group_name, :]
         assert np.all(np.sort(sample_names) == cmdata.obs_names.sort_values().to_numpy())
         assert dataset.n_samples[group_name] == cmdata.n_obs
 
     for view_name, view_names in dataset.feature_names.items():
-        assert np.all(view_names == mdata[view_name].var_names)
-        assert dataset.n_features[view_name] == mdata[view_name].n_vars
+        cvarnames = get_varnames(mdata, view_name, subset_var)
+
+        assert np.all(view_names == cvarnames)
+        assert dataset.n_features[view_name] == cvarnames.size
 
 
 @pytest.mark.parametrize("axis", (0, 1, 2))
@@ -219,7 +238,7 @@ def test_apply_by_group_view(mdata, dataset, usedask):
 def test_apply_by_view(mdata, dataset, usedask):
     def applyfun(adata, group_name, view_name):
         assert np.all(adata.obs_names.sort_values() == mdata[view_name].obs_names.sort_values())
-        assert np.all(adata.var_names == mdata[view_name].var_names)
+        assert np.all(adata.var_names == dataset.feature_names[view_name])
 
     with settings.override(use_dask=usedask):
         dataset.apply(applyfun, by_group=False)
@@ -229,10 +248,12 @@ def test_apply_by_view(mdata, dataset, usedask):
     Version(ad.__version__) < Version("0.11.4"), reason="anndata bug: https://github.com/scverse/anndata/pull/1911"
 )
 @pytest.mark.parametrize("usedask", [False, True])
-def test_apply_by_group(mdata, dataset, usedask):
+def test_apply_by_group(mdata, dataset, subset_var, usedask):
+    varnames = np.concat(tuple(dataset.feature_names.values()))
+
     def applyfun(adata, group_name, view_name):
         assert np.all(adata.obs_names == dataset.sample_names[group_name])
-        assert np.all(adata.var_names == mdata.var_names)
+        assert np.all(adata.var_names == varnames)
 
     with settings.override(use_dask=usedask):
         dataset.apply(applyfun, by_view=False)
@@ -323,7 +344,9 @@ def test_get_annotations(mdata, dataset):
 
     for view_name in dataset.view_names:
         if view_name != "view_2":
-            assert np.all(annot[view_name] == mdata[view_name].varm["annot"].to_numpy().T)
+            assert np.all(
+                annot[view_name] == mdata[view_name].varm["annot"].loc[dataset.feature_names[view_name], :].to_numpy().T
+            )
             assert np.all(annot_names[view_name] == [f"annot_{view_name}_{i}" for i in range(10)])
         else:
             assert np.all(annot[view_name] == mdata.varm["annot"].loc[dataset.feature_names[view_name], :].to_numpy().T)

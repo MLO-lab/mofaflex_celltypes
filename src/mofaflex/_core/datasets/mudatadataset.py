@@ -39,6 +39,7 @@ class MuDataDataset(MofaFlexDataset):
         group_by: str | list[str] | None = None,
         preprocessor: Preprocessor | None = None,
         cast_to: Union[np.ScalarType] | None = np.float32,  # noqa UP007
+        subset_var: str | None = "highly_variable",
         sample_names: dict[str, NDArray[str]] | None = None,
         feature_names: dict[str, NDArray[str]] | None = None,
         **kwargs,
@@ -48,6 +49,18 @@ class MuDataDataset(MofaFlexDataset):
         self._group_by = group_by
         self._sample_selection = self._feature_selection = slice(None)
         self._groups = None
+
+        if feature_names is None and subset_var is not None:
+            feature_names = {}
+            if subset_var in self._orig_data.var:
+                for modname, modmap in self._orig_data.varmap.items():
+                    feature_names[modname] = self._orig_data.mod[modname].var_names[
+                        self._orig_data.var[subset_var][modmap.reshape(-1) > 0]
+                    ]
+            else:
+                for modname, mod in self._orig_data.mod.items():
+                    if subset_var in mod.var:
+                        feature_names[modname] = mod.var_names[mod.var[subset_var]]
 
         self.reindex_samples(sample_names)
         self.reindex_features(feature_names)
@@ -78,7 +91,7 @@ class MuDataDataset(MofaFlexDataset):
                 selection = selection.append(group_sample_names)
             self._data = self._orig_data[selection, self._feature_selection]
             self._sample_selection = selection
-        else:
+        elif sample_names is None:
             self._data = self._orig_data[:, self._feature_selection]
             self._sample_selection = slice(None)
 
@@ -122,7 +135,7 @@ class MuDataDataset(MofaFlexDataset):
                 selection = selection.append(view_feature_names)
             self._data = self._orig_data[self._sample_selection, selection]
             self._feature_selection = selection
-        else:
+        elif feature_names is None:
             self._data = self._orig_data[self._sample_selection, :]
             self._feature_selection = slice(None)
 
@@ -330,7 +343,7 @@ class MuDataDataset(MofaFlexDataset):
             if obskey is not None:
                 for modname, mod in subdata.mod.items():
                     ccov = None
-                    if obskey in mod.obs.columns:
+                    if obskey in mod.obs:
                         ccov = self._align_array_to_samples(mod.obs[obskey].to_numpy(), modname, subdata)[:, None]
                     elif obskey in subdata.obs.columns:
                         ccov = subdata.obs[obskey].to_numpy()
@@ -442,7 +455,12 @@ class MuDataDataset(MofaFlexDataset):
 
     def _apply_by_view(self, func: ApplyCallable[T], vkwargs: dict[str, dict[str, Any]], **kwargs) -> dict[str, T]:
         data = self._data
-        if (self._sample_selection != slice(None) or self._feature_selection != slice(None)) and settings.use_dask:
+        if (
+            not isinstance(self._sample_selection, slice)
+            or self._sample_selection != slice(None)
+            or not isinstance(self._feature_selection, slice)
+            or self._feature_selection != slice(None)
+        ) and settings.use_dask:
             if have_dask():
                 data = _mudata_to_dask(self._orig_data, with_extra=False)[
                     self._sample_selection, self._feature_selection

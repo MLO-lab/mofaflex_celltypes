@@ -52,6 +52,7 @@ class AnnDataDictDataset(MofaFlexDataset):
         use_var: Literal["union", "intersection"] = "union",
         preprocessor: Preprocessor | None = None,
         cast_to: Union[np.ScalarType] | None = np.float32,  # noqa UP007
+        subset_var: str | None = "highly_variable",
         sample_names: dict[str, NDArray[str]] | None = None,
         feature_names: dict[str, NDArray[str]] | None = None,
         **kwargs,
@@ -60,8 +61,28 @@ class AnnDataDictDataset(MofaFlexDataset):
         self._use_obs = use_obs
         self._use_var = use_var
 
+        if feature_names is None and subset_var is not None:
+            func = self._combine_func("var")
+            feature_names = {}
+            for group in self._data.values():
+                for view_name, view in group.items():
+                    cfeaturenames = view.var_names
+                    if subset_var in view.var:
+                        cfeaturenames = cfeaturenames[view.var[subset_var]]
+
+                        if view_name not in feature_names:
+                            feature_names[view_name] = cfeaturenames
+                        else:
+                            feature_names[view_name] = func(feature_names[view_name], cfeaturenames)
+            if len(feature_names) == 0:
+                feature_names = None
+
         self.reindex_samples(sample_names)
         self.reindex_features(feature_names)
+
+    def _combine_func(self, attr: Literal["obs", "var"]):
+        use = getattr(self, f"_use_{attr}")
+        return (lambda x, y: x.union(y, sort=False)) if use == "union" else (lambda x, y: x.intersection(y))
 
     def _reindex_attr(self, attr: Literal["obs", "var"], aligned: dict[str, NDArray[str]] | None = None):
         if aligned is None:
@@ -81,14 +102,15 @@ class AnnDataDictDataset(MofaFlexDataset):
         setattr(self, f"_{attr}map", map)
 
     def reindex_samples(self, sample_names: dict[str, NDArray[str]] | None = None):
-        union = lambda x, y: x.union(y, sort=False)
+        func = self._combine_func("obs")
         aligned = {}
         if sample_names is not None:
-            self._used_obs = "union"
+            self._used_obs = {}
             for group_name, group in self._data.items():
                 cnames = sample_names.get(group_name)
                 if cnames is not None:
-                    cunion = reduce(union, (view.obs_names for view in group.values()))
+                    self._used_obs["group_name"] = "union"
+                    cunion = reduce(lambda x, y: x.union(y, sort=False), (view.obs_names for view in group.values()))
                     cnames = pd.Index(cnames)
                     if not cnames.isin(cunion).all():
                         _logger.warning(
@@ -96,30 +118,30 @@ class AnnDataDictDataset(MofaFlexDataset):
                         )
                         cnames = cnames.intersection(cunion)
                     aligned[group_name] = cnames
-                else:
-                    aligned[group_name] = reduce(union, (view.obs_names for view in group.values()))
+                elif group_name not in aligned:
+                    self._used_obs["group_name"] = self._use_obs
+                    aligned[group_name] = reduce(func, (view.obs_names for view in group.values()))
         else:
             self._used_obs = self._use_obs
             for group_name, group in self._data.items():
-                aligned[group_name] = reduce(
-                    union if self._use_obs == "union" else lambda x, y: x.intersection(y),
-                    (view.obs_names for view in group.values()),
-                )
+                aligned[group_name] = reduce(func, (view.obs_names for view in group.values()))
 
         self._aligned_obs = aligned
         self._reindex_attr("obs", aligned)
 
     def reindex_features(self, feature_names: dict[str, NDArray[str]] | None = None):
-        union = lambda x, y: x.union(y)
+        func = self._combine_func("var")
         aligned = {}
         if feature_names is not None:
-            self._used_var = "union"
+            self._used_var = {}
             for view_name in self.view_names:
                 cunion = reduce(
-                    union, (group[view_name].var_names for group in self._data.values() if view_name in group)
+                    lambda x, y: x.union(y, sort=False),
+                    (group[view_name].var_names for group in self._data.values() if view_name in group),
                 )
                 cnames = feature_names.get(view_name)
                 if cnames is not None:
+                    self._used_var[view_name] = "union"
                     cnames = pd.Index(cnames)
                     if not cnames.isin(cunion).all():
                         _logger.warning(
@@ -127,16 +149,16 @@ class AnnDataDictDataset(MofaFlexDataset):
                         )
                         cnames = cnames.intersection(cunion)
                     aligned[view_name] = cnames
-                else:
+                elif view_name not in aligned:
+                    self._used_var[view_name] = self._use_var
                     aligned[view_name] = reduce(
-                        union, (group[view_name].var_names for group in self._data.values() if view_name in group)
+                        func, (group[view_name].var_names for group in self._data.values() if view_name in group)
                     )
         else:
             self._used_var = self._use_var
             for view_name in self.view_names:
                 aligned[view_name] = reduce(
-                    union if self._use_var == "union" else lambda x, y: x.intersection(y),
-                    (group[view_name].var_names for group in self._data.values() if view_name in group),
+                    func, (group[view_name].var_names for group in self._data.values() if view_name in group)
                 )
 
         self._aligned_var = aligned
@@ -363,7 +385,7 @@ class AnnDataDictDataset(MofaFlexDataset):
             ccovs = {}
             if obskey is not None:
                 for view_name, view in group.items():
-                    if obskey in view.obs.columns:
+                    if obskey in view.obs:
                         ccovs[view_name] = self._align_data_array_to_global(
                             view.obs[obskey].to_numpy(), group_name, view_name, "samples"
                         )[:, None]
@@ -498,10 +520,11 @@ class AnnDataDictDataset(MofaFlexDataset):
                     cdata = cdata.copy()
                     cdata.X = cdata.X.astype(np.promote_types(cdata.X.dtype, type(np.nan)))
                     data[group_name] = cdata
+            used = self._used_var[view_name] if isinstance(self._used_var, dict) else self._used_var
             data = ad.concat(
                 data,
                 axis="obs",
-                join="inner" if self._used_var == "intersection" else "outer",
+                join="inner" if used == "intersection" else "outer",
                 label="__group",
                 merge="unique",
                 uns_merge=None,
@@ -540,10 +563,11 @@ class AnnDataDictDataset(MofaFlexDataset):
                     cdata = cdata.copy()
                     cdata.X = cdata.X.astype(np.promote_types(cdata.X.dtype, type(np.nan)))
                     data[view_name] = cdata
+            used = self._used_obs[group_name] if isinstance(self._used_obs, dict) else self._used_obs
             data = ad.concat(
                 data,
                 axis="var",
-                join="inner" if self._used_obs == "intersection" else "outer",
+                join="inner" if used == "intersection" else "outer",
                 label="__view",
                 merge="unique",
                 uns_merge=None,

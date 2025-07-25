@@ -109,7 +109,10 @@ class DataOptions(_Options):
     """How to align observations across views. Ignored if the data is not a nested dict of :class:`AnnData<anndata.AnnData>` objects."""
 
     use_var: Literal["union", "intersection"] | None = "union"
-    """How to align variables across groups. Ignored if the data is not a nested dict of :class:`AnnData<anndata.AnnData>` objects"""
+    """How to align variables across groups. Ignored if the data is not a nested dict of :class:`AnnData<anndata.AnnData>` objects."""
+
+    subset_var: str | None = "highly_variable"
+    """`.var` column with boolean values to select features."""
 
     plot_data_overview: bool = True
     """Plot data overview."""
@@ -281,7 +284,11 @@ class MOFAFLEX:
 
     def _make_dataset(self, data: MuData | dict[str, dict[str, AnnData]]) -> MofaFlexDataset:
         return MofaFlexDataset(
-            data, group_by=self._data_opts.group_by, use_obs=self._data_opts.use_obs, use_var=self._data_opts.use_var
+            data,
+            group_by=self._data_opts.group_by,
+            use_obs=self._data_opts.use_obs,
+            use_var=self._data_opts.use_var,
+            subset_var=self._data_opts.subset_var,
         )
 
     def _make_preprocessor(self, data: MofaFlexDataset) -> preprocessing.MofaFlexPreprocessor:

@@ -34,6 +34,12 @@ def anndata_dict(random_adata, rng):
     adata_dict["group_0"]["view_0"].X = sparse.csr_array(adata_dict["group_0"]["view_0"].X)
     adata_dict["group_1"]["view_1"].X = sparse.csc_array(adata_dict["group_1"]["view_1"].X)
 
+    variable_genes = rng.choice(big_adata.var_names[view_idxs[0]], size=int(0.4 * view_idxs[0].size), replace=False)
+    for group in adata_dict.values():
+        view = group["view_0"]
+        view.var["highly_variable"] = False
+        view.var.loc[view.var_names.intersection(variable_genes), "highly_variable"] = True
+
     return adata_dict
 
 
@@ -47,16 +53,21 @@ def use_var(request):
     return request.param
 
 
+@pytest.fixture(scope="module", params=(None, "highly_variable"))
+def subset_var(request):
+    return request.param
+
+
 @pytest.fixture(scope="module")
-def dataset(anndata_dict, use_obs, use_var):
-    return MofaFlexDataset(anndata_dict, use_obs=use_obs, use_var=use_var, cast_to=np.float32)
+def dataset(anndata_dict, use_obs, use_var, subset_var):
+    return MofaFlexDataset(anndata_dict, use_obs=use_obs, use_var=use_var, subset_var=subset_var, cast_to=np.float32)
 
 
 def test_dataset(dataset):
     assert isinstance(dataset, AnnDataDictDataset)
 
 
-def test_properties(anndata_dict, use_obs, use_var, dataset):
+def test_properties(anndata_dict, use_obs, use_var, subset_var, dataset):
     obs_func = (lambda x, y: x.union(y)) if use_obs == "union" else lambda x, y: x.intersection(y)
     var_func = (lambda x, y: x.union(y)) if use_var == "union" else lambda x, y: x.intersection(y)
 
@@ -68,10 +79,14 @@ def test_properties(anndata_dict, use_obs, use_var, dataset):
     var_names = {}
     for group in anndata_dict.values():
         for view_name, view in group.items():
+            cvarnames = view.var_names
+            if subset_var is not None and subset_var in view.var.columns:
+                cvarnames = cvarnames[view.var[subset_var]]
+
             if view_name not in var_names:
-                var_names[view_name] = view.var_names
+                var_names[view_name] = cvarnames
             else:
-                var_names[view_name] = var_func(var_names[view_name], view.var_names)
+                var_names[view_name] = var_func(var_names[view_name], cvarnames)
 
     for group_name, group_obs in obs_names.items():
         assert dataset.n_samples[group_name] == group_obs.size
