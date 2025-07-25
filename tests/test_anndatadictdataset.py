@@ -3,6 +3,7 @@ from functools import reduce
 import numpy as np
 import pandas as pd
 import pytest
+from anndata import AnnData
 from scipy import sparse
 
 from mofaflex import settings
@@ -34,6 +35,12 @@ def anndata_dict(random_adata, rng):
     adata_dict["group_0"]["view_0"].X = sparse.csr_array(adata_dict["group_0"]["view_0"].X)
     adata_dict["group_1"]["view_1"].X = sparse.csc_array(adata_dict["group_1"]["view_1"].X)
 
+    variable_genes = rng.choice(big_adata.var_names[view_idxs[0]], size=int(0.4 * view_idxs[0].size), replace=False)
+    for group in adata_dict.values():
+        view = group["view_0"]
+        view.var["highly_variable"] = False
+        view.var.loc[view.var_names.intersection(variable_genes), "highly_variable"] = True
+
     return adata_dict
 
 
@@ -47,16 +54,36 @@ def use_var(request):
     return request.param
 
 
+@pytest.fixture(scope="module", params=(None, "highly_variable"))
+def subset_var(request):
+    return request.param
+
+
+@pytest.fixture(
+    scope="module",
+    params=(
+        None,
+        "layer1",
+        {"view_0": "layer1", "view_1": None},
+        {"group_0": {"view_0": None, "view_1": "layer1"}, "group_1": {"view_0": "layer1", "view_1": "layer1"}},
+    ),
+)
+def layer(request):
+    return request.param
+
+
 @pytest.fixture(scope="module")
-def dataset(anndata_dict, use_obs, use_var):
-    return MofaFlexDataset(anndata_dict, use_obs=use_obs, use_var=use_var, cast_to=np.float32)
+def dataset(anndata_dict, layer, use_obs, use_var, subset_var):
+    return MofaFlexDataset(
+        anndata_dict, layer=layer, use_obs=use_obs, use_var=use_var, subset_var=subset_var, cast_to=np.float32
+    )
 
 
 def test_dataset(dataset):
     assert isinstance(dataset, AnnDataDictDataset)
 
 
-def test_properties(anndata_dict, use_obs, use_var, dataset):
+def test_properties(anndata_dict, use_obs, use_var, subset_var, dataset):
     obs_func = (lambda x, y: x.union(y)) if use_obs == "union" else lambda x, y: x.intersection(y)
     var_func = (lambda x, y: x.union(y)) if use_var == "union" else lambda x, y: x.intersection(y)
 
@@ -68,10 +95,14 @@ def test_properties(anndata_dict, use_obs, use_var, dataset):
     var_names = {}
     for group in anndata_dict.values():
         for view_name, view in group.items():
+            cvarnames = view.var_names
+            if subset_var is not None and subset_var in view.var.columns:
+                cvarnames = cvarnames[view.var[subset_var]]
+
             if view_name not in var_names:
-                var_names[view_name] = view.var_names
+                var_names[view_name] = cvarnames
             else:
-                var_names[view_name] = var_func(var_names[view_name], view.var_names)
+                var_names[view_name] = var_func(var_names[view_name], cvarnames)
 
     for group_name, group_obs in obs_names.items():
         assert dataset.n_samples[group_name] == group_obs.size
@@ -172,7 +203,29 @@ def test_index_mapping(anndata_dict, dataset, rng):
             assert np.all(global_idx[local_idx >= 0] == new_global_idx)
 
 
-def test_getitems(anndata_dict, dataset, rng):
+def test_getitems(anndata_dict, dataset, layer, rng):
+    get_layer = lambda adata, layer: adata.layers[layer] if layer is not None else adata.X
+    if layer is not None:
+        if isinstance(layer, str):
+            func = lambda group_name, view_name: layer
+        elif isinstance(layer, dict) and all(isinstance(view, str | None) for view in layer.values()):
+            func = lambda group_name, view_name: layer[view_name]
+        else:
+            func = lambda group_name, view_name: layer[group_name][view_name]
+        anndata_dict = {
+            group_name: {
+                view_name: AnnData(
+                    X=get_layer(view, func(group_name, view_name)),
+                    obs=view.obs,
+                    var=view.var,
+                    obsm=view.obsm,
+                    varm=view.varm,
+                )
+                for view_name, view in group.items()
+            }
+            for group_name, group in anndata_dict.items()
+        }
+
     idx = {
         group_name: rng.choice(sample_names.size, size=sample_names.size // 3, replace=False)
         for group_name, sample_names in dataset.sample_names.items()

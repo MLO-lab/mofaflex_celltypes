@@ -1,6 +1,7 @@
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Literal, get_args
@@ -85,31 +86,40 @@ class _Options:
 class DataOptions(_Options):
     """Options for the data."""
 
-    group_by: str | list[str] | None = None
+    group_by: str | Sequence[str] | None = None
     """Columns of `.obs` in :class:`MuData<mudata.MuData>` objects to group data by. Ignored if the input data
     is not a :class:`MuData<mudata.MuData>` object.
     """
 
+    layer: Mapping[str, str | None] | Mapping[str, Mapping[str, str | None]] | str | None = None
+    """Which layer to use. If `None`, the `.X` element will be used. If `str`, the same layer will be used for
+    all groups and views. If a dict of strings, the keys must correspond to view names and the values to layers.
+    If a nested dict, different layers can be used for each combination of group and view. The last format is
+    only accepted if the data is a nested dictionary of :class:`AnnData<anndata.AnnData>` objects."""
+
     scale_per_group: bool = True
     """Scale Normal likelihood data per group, otherwise across all groups."""
 
-    annotations_varm_key: dict[str, str] | str | None = None
+    annotations_varm_key: Mapping[str, str] | str | None = None
     """Key of .varm attribute of each AnnData object that contains annotation values."""
 
-    covariates_obs_key: dict[str, str] | str | None = None
+    covariates_obs_key: Mapping[str, str] | str | None = None
     """Key of .obs attribute of each :class:`AnnData<anndata.AnnData>` object that contains covariate values."""
 
-    covariates_obsm_key: dict[str, str] | str | None = None
+    covariates_obsm_key: Mapping[str, str] | str | None = None
     """Key of .obsm attribute of each :class:`AnnData<anndata.AnnData>` object that contains covariate values."""
 
-    guiding_vars_obs_keys: dict[str, dict[str, str]] | dict[str, str] | None = None
+    guiding_vars_obs_keys: Mapping[str, Mapping[str, str]] | Mapping[str, str] | None = None
     """Keys of .obs attribute of each :class:`AnnData<anndata.AnnData>` object that contains guiding variable values."""
 
     use_obs: Literal["union", "intersection"] | None = "union"
     """How to align observations across views. Ignored if the data is not a nested dict of :class:`AnnData<anndata.AnnData>` objects."""
 
     use_var: Literal["union", "intersection"] | None = "union"
-    """How to align variables across groups. Ignored if the data is not a nested dict of :class:`AnnData<anndata.AnnData>` objects"""
+    """How to align variables across groups. Ignored if the data is not a nested dict of :class:`AnnData<anndata.AnnData>` objects."""
+
+    subset_var: str | None = "highly_variable"
+    """`.var` column with boolean values to select features."""
 
     plot_data_overview: bool = True
     """Plot data overview."""
@@ -125,25 +135,25 @@ class ModelOptions(_Options):
     n_factors: int = 0
     """Number of latent factors."""
 
-    weight_prior: dict[str, WeightPriorType] | WeightPriorType = "Normal"
+    weight_prior: Mapping[str, WeightPriorType] | WeightPriorType = "Normal"
     """Weight priors for each view (if dict) or for all views (if str)."""
 
-    factor_prior: dict[str, FactorPriorType] | FactorPriorType = "Normal"
+    factor_prior: Mapping[str, FactorPriorType] | FactorPriorType = "Normal"
     """Factor priors for each group (if dict) or for all groups (if str)."""
 
-    likelihoods: dict[str, LikelihoodType] | LikelihoodType | None = None
+    likelihoods: Mapping[str, LikelihoodType] | LikelihoodType | None = None
     """Data likelihoods for each view (if dict) or for all views (if str). Inferred automatically if None."""
 
-    nonnegative_weights: dict[str, bool] | bool = False
+    nonnegative_weights: Mapping[str, bool] | bool = False
     """Non-negativity constraints for weights for each view (if dict) or for all views (if bool)."""
 
-    guiding_vars_likelihoods: dict[str, str] | Literal["Normal", "Categorical", "Bernoulli"] | None = "Normal"
+    guiding_vars_likelihoods: Mapping[str, str] | Literal["Normal", "Categorical", "Bernoulli"] | None = "Normal"
     """Likelihood for each guiding variable (if dict) or for all guiding variables (if str)."""
 
-    guiding_vars_scales: dict[str, float] | float = 1.0
+    guiding_vars_scales: Mapping[str, float] | float = 1.0
     """Scale for the likelihood of each guiding variable, to put more or less emphasis on them during training."""
 
-    nonnegative_factors: dict[str, bool] | bool = False
+    nonnegative_factors: Mapping[str, bool] | bool = False
     """Non-negativity constraints for factors for each group (if dict) or for all groups (if bool)."""
 
     annotation_confidence: float = 0.99
@@ -220,7 +230,7 @@ class SmoothOptions(_Options):
     group_covar_rank: int = 1
     """Rank of the group correlation matrix. Only relevant if `mefisto_kernel=True`."""
 
-    warp_groups: list[str] = field(default_factory=list)
+    warp_groups: Sequence[str] = field(default_factory=list)
     """List of groups to apply dynamic time warping to."""
 
     warp_interval: int = 20
@@ -256,7 +266,7 @@ class MOFAFLEX:
         *args: Options for training.
     """
 
-    def __init__(self, data: MuData | dict[str, dict[str, AnnData]], *args: _Options):
+    def __init__(self, data: MuData | Mapping[str, Mapping[str, AnnData]], *args: _Options):
         self._preprocess_options(*args)
         data = self._make_dataset(data)
         self._adjust_options(data)
@@ -279,9 +289,14 @@ class MOFAFLEX:
 
         self._fit(data, preprocessor)
 
-    def _make_dataset(self, data: MuData | dict[str, dict[str, AnnData]]) -> MofaFlexDataset:
+    def _make_dataset(self, data: MuData | Mapping[str, Mapping[str, AnnData]]) -> MofaFlexDataset:
         return MofaFlexDataset(
-            data, group_by=self._data_opts.group_by, use_obs=self._data_opts.use_obs, use_var=self._data_opts.use_var
+            data,
+            layer=self._data_opts.layer,
+            group_by=self._data_opts.group_by,
+            use_obs=self._data_opts.use_obs,
+            use_var=self._data_opts.use_var,
+            subset_var=self._data_opts.subset_var,
         )
 
     def _make_preprocessor(self, data: MofaFlexDataset) -> preprocessing.MofaFlexPreprocessor:
@@ -297,7 +312,7 @@ class MOFAFLEX:
         data.preprocessor = preprocessor
         return preprocessor
 
-    def _mofaflexdataset(self, data: MuData | dict[str, dict[str, AnnData]]) -> MofaFlexDataset:
+    def _mofaflexdataset(self, data: MuData | Mapping[str, Mapping[str, AnnData]]) -> MofaFlexDataset:
         data = self._make_dataset(data)
         self._make_preprocessor(data)
         return data
@@ -767,7 +782,7 @@ class MOFAFLEX:
         if self._train_opts.seed is None:
             self._train_opts.seed = int(time.strftime("%y%m%d%H%M"))
 
-    def _adjust_options(self, data: dict[dict[AnnData]]):
+    def _adjust_options(self, data: Mapping[str, Mapping[str, AnnData]]):
         # convert input arguments to dictionaries if necessary
         guiding_vars_names = (
             self._data_opts.guiding_vars_obs_keys.keys() if self._data_opts.guiding_vars_obs_keys else []
@@ -1226,7 +1241,7 @@ class MOFAFLEX:
         self,
         return_type: Literal["pandas", "anndata", "numpy"] = "pandas",
         moment: Literal["mean", "std"] = "mean",
-        x: dict[str, np.ndarray | torch.Tensor] | None = None,
+        x: Mapping[str, np.ndarray | torch.Tensor] | None = None,
         batch_size: int | None = None,
         ordered: bool = False,
     ) -> _ResultsTypeDF:
@@ -1255,7 +1270,7 @@ class MOFAFLEX:
 
         return self._get_component(gps, return_type)
 
-    def _get_gps(self, x: dict[str, np.ndarray | torch.Tensor], batch_size: int | None = None):
+    def _get_gps(self, x: Mapping[str, np.ndarray | torch.Tensor], batch_size: int | None = None):
         if batch_size is None:
             batch_size = self._train_opts.batch_size
         gps = MeanStd({}, {})
@@ -1316,7 +1331,9 @@ class MOFAFLEX:
 
         return device
 
-    def impute_data(self, data: MuData | dict[str, dict[str, AnnData]], missing_only=False) -> dict[dict[str, AnnData]]:
+    def impute_data(
+        self, data: MuData | Mapping[str, Mapping[str, AnnData]], missing_only=False
+    ) -> dict[dict[str, AnnData]]:
         """Impute values in the training data using the trained factorization.
 
         Args:
@@ -1349,8 +1366,8 @@ class MOFAFLEX:
         self,
         path: str | Path,
         mofa_compat: MOFACompatOption = False,
-        data: dict[str, dict[str, AnnData]] | None = None,
-        intercepts: dict[str, dict[str, np.ndarray]] | None = None,
+        data: Mapping[str, Mapping[str, AnnData]] | None = None,
+        intercepts: Mapping[str, Mapping[str, np.ndarray]] | None = None,
     ):
         state = {
             "weights": self._weights._asdict(),
