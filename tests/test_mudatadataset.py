@@ -3,6 +3,8 @@ import mudata as md
 import numpy as np
 import pandas as pd
 import pytest
+from anndata import AnnData
+from mudata import MuData
 from packaging.version import Version
 from scipy import sparse
 
@@ -22,6 +24,7 @@ def mdata(rng):
         cobs_names = rng.choice(obs_names, size=int(0.8 * nobs), replace=False)
         adata = ad.AnnData(
             X=rng.poisson(0.5, size=(len(cobs_names), nvar_per_mod)),
+            layers={"layer1": rng.normal(0, 1, size=(len(cobs_names), nvar_per_mod)).astype(np.float32)},
             obs=pd.DataFrame(index=cobs_names),
             var=pd.DataFrame(index=[f"mod_{view}_feature_{i}" for i in range(nvar_per_mod)]),
         )
@@ -69,9 +72,14 @@ def subset_var(request):
     return request.param
 
 
+@pytest.fixture(scope="module", params=(None, "layer1", {"view_0": "layer1", "view_1": None, "view_2": "layer1"}))
+def layer(request):
+    return request.param
+
+
 @pytest.fixture(scope="module")
-def dataset(mdata, subset_var):
-    return MofaFlexDataset(mdata, group_by="batch", subset_var=subset_var, cast_to=np.float32)
+def dataset(mdata, layer, subset_var):
+    return MofaFlexDataset(mdata, group_by="batch", layer=layer, subset_var=subset_var, cast_to=np.float32)
 
 
 def get_varnames(mdata, modname, subset_var):
@@ -195,7 +203,28 @@ def test_index_mapping(mdata, dataset, rng):
             assert np.all(global_idx[local_idx >= 0] == new_global_idx)
 
 
-def test_getitems(mdata, dataset, rng):
+def test_getitems(mdata, dataset, layer, rng):
+    if layer is not None:
+        if isinstance(layer, str):
+            func = lambda modname: layer
+        else:
+            func = lambda modname: layer[modname]
+        mods = {}
+        for modname in mdata.mod.keys():
+            adata = mdata.mod[modname]
+            clayer = func(modname)
+            mods[modname] = AnnData(
+                X=adata.X if clayer is None else adata.layers[clayer],
+                obs=adata.obs,
+                var=adata.var,
+                obsm=adata.obsm,
+                varm=adata.varm,
+            )
+        new_mdata = MuData(mods, obs=mdata.obs, var=mdata.var, obsmap=mdata.obsmap, varmap=mdata.varmap)
+        new_mdata.obs = mdata.obs
+        new_mdata.var = mdata.var
+        mdata = new_mdata
+
     idx = {
         group_name: rng.choice(sample_names.size, size=sample_names.size // 3, replace=False)
         for group_name, sample_names in dataset.sample_names.items()

@@ -3,6 +3,7 @@ from functools import reduce
 import numpy as np
 import pandas as pd
 import pytest
+from anndata import AnnData
 from scipy import sparse
 
 from mofaflex import settings
@@ -58,9 +59,24 @@ def subset_var(request):
     return request.param
 
 
+@pytest.fixture(
+    scope="module",
+    params=(
+        None,
+        "layer1",
+        {"view_0": "layer1", "view_1": None},
+        {"group_0": {"view_0": None, "view_1": "layer1"}, "group_1": {"view_0": "layer1", "view_1": "layer1"}},
+    ),
+)
+def layer(request):
+    return request.param
+
+
 @pytest.fixture(scope="module")
-def dataset(anndata_dict, use_obs, use_var, subset_var):
-    return MofaFlexDataset(anndata_dict, use_obs=use_obs, use_var=use_var, subset_var=subset_var, cast_to=np.float32)
+def dataset(anndata_dict, layer, use_obs, use_var, subset_var):
+    return MofaFlexDataset(
+        anndata_dict, layer=layer, use_obs=use_obs, use_var=use_var, subset_var=subset_var, cast_to=np.float32
+    )
 
 
 def test_dataset(dataset):
@@ -187,7 +203,29 @@ def test_index_mapping(anndata_dict, dataset, rng):
             assert np.all(global_idx[local_idx >= 0] == new_global_idx)
 
 
-def test_getitems(anndata_dict, dataset, rng):
+def test_getitems(anndata_dict, dataset, layer, rng):
+    get_layer = lambda adata, layer: adata.layers[layer] if layer is not None else adata.X
+    if layer is not None:
+        if isinstance(layer, str):
+            func = lambda group_name, view_name: layer
+        elif isinstance(layer, dict) and all(isinstance(view, str | None) for view in layer.values()):
+            func = lambda group_name, view_name: layer[view_name]
+        else:
+            func = lambda group_name, view_name: layer[group_name][view_name]
+        anndata_dict = {
+            group_name: {
+                view_name: AnnData(
+                    X=get_layer(view, func(group_name, view_name)),
+                    obs=view.obs,
+                    var=view.var,
+                    obsm=view.obsm,
+                    varm=view.varm,
+                )
+                for view_name, view in group.items()
+            }
+            for group_name, group in anndata_dict.items()
+        }
+
     idx = {
         group_name: rng.choice(sample_names.size, size=sample_names.size // 3, replace=False)
         for group_name, sample_names in dataset.sample_names.items()

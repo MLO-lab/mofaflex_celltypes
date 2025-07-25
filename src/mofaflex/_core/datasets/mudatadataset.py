@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TypeVar, Union
 
 import anndata as ad
@@ -10,25 +11,56 @@ from scipy import sparse
 
 from ..settings import settings
 from .base import ApplyCallable, ApplyToCallable, MofaFlexDataset, Preprocessor
-from .utils import anndata_to_dask, apply_to_nested, array_to_dask, from_dask, have_dask, warn_dask
+from .utils import (
+    anndata_to_dask,
+    apply_to_nested,
+    array_to_dask,
+    from_dask,
+    have_dask,
+    select_anndata_layer,
+    warn_dask,
+)
 
 T = TypeVar("T")
 _logger = logging.getLogger(__name__)
 
 
-def _mudata_to_dask(mudata: MuData, with_extra=True):
-    mods = {modname: anndata_to_dask(mod) for modname, mod in mudata.mod.items()}
-    dask_mudata = MuData(mods, obs=mudata.obs, var=mudata.var, obsmap=mudata.obsmap, varmap=mudata.varmap)
+def _fixup_mudata(mudata: MuData, orig: MuData, with_extra: bool = True, extra_callback=lambda x: x):
     # MuData constructor runs update(), so we need to reset obs and var
-    dask_mudata.obs = mudata.obs
-    dask_mudata.var = mudata.var
+    mudata.obs = orig.obs
+    mudata.var = orig.var
     if with_extra:
         for attrname in ("obsm", "obsp", "varm", "varp"):
-            attr = getattr(mudata, attrname)
-            dask_attr = getattr(dask_mudata, attrname)
+            attr = getattr(orig, attrname)
+            new_attr = getattr(mudata, attrname)
             for k, v in attr.items():
-                dask_attr[k] = array_to_dask(v)
-    return dask_mudata
+                new_attr[k] = extra_callback(v)
+    return mudata
+
+
+def _mudata_to_dask(mudata: MuData, with_extra: bool = True):
+    mods = {modname: anndata_to_dask(mod) for modname, mod in mudata.mod.items()}
+    dask_mudata = MuData(mods, obs=mudata.obs, var=mudata.var, obsmap=mudata.obsmap, varmap=mudata.varmap)
+    return _fixup_mudata(dask_mudata, mudata, with_extra=with_extra, extra_callback=array_to_dask)
+
+
+def _select_layers(mudata: MuData, layer: Mapping[str, str | None] | None):
+    if layer is None:
+        return mudata
+
+    if isinstance(layer, str):
+        layerfunc = lambda modname: layer
+    else:
+        layerfunc = lambda modname: layer.get(modname)
+
+    new_mudata = MuData(
+        {modname: select_anndata_layer(mod, layerfunc(modname)) for modname, mod in mudata.mod.items()},
+        obs=mudata.obs,
+        var=mudata.var,
+        obsmap=mudata.obsmap,
+        varmap=mudata.varmap,
+    )
+    return _fixup_mudata(new_mudata, mudata, with_extra=True)
 
 
 class MuDataDataset(MofaFlexDataset):
@@ -36,16 +68,17 @@ class MuDataDataset(MofaFlexDataset):
         self,
         mudata: MuData,
         *,
-        group_by: str | list[str] | None = None,
+        layer: Mapping[str, str | None] | str | None = None,
+        group_by: str | Sequence[str] | None = None,
         preprocessor: Preprocessor | None = None,
         cast_to: Union[np.ScalarType] | None = np.float32,  # noqa UP007
         subset_var: str | None = "highly_variable",
-        sample_names: dict[str, NDArray[str]] | None = None,
-        feature_names: dict[str, NDArray[str]] | None = None,
+        sample_names: Mapping[str, NDArray[str]] | None = None,
+        feature_names: Mapping[str, NDArray[str]] | None = None,
         **kwargs,
     ):
         super().__init__(mudata, preprocessor=preprocessor, cast_to=cast_to)
-        self._orig_data = self._data
+        self._orig_data = _select_layers(self._data, layer)
         self._group_by = group_by
         self._sample_selection = self._feature_selection = slice(None)
         self._groups = None
@@ -65,7 +98,7 @@ class MuDataDataset(MofaFlexDataset):
         self.reindex_samples(sample_names)
         self.reindex_features(feature_names)
 
-    def reindex_samples(self, sample_names: dict[str, NDArray[str]] | None = None):
+    def reindex_samples(self, sample_names: Mapping[str, NDArray[str]] | None = None):
         if sample_names is not None and (
             self._groups is None
             or any(
@@ -114,7 +147,7 @@ class MuDataDataset(MofaFlexDataset):
             observed=True,
         ).indices
 
-    def reindex_features(self, feature_names: dict[str, NDArray[str]] | None = None):
+    def reindex_features(self, feature_names: Mapping[str, NDArray[str]] | None = None):
         if feature_names is not None and any(
             feature_names[view_name].size != fnames.size or np.any(feature_names[view_name] != fnames)
             for view_name, fnames in self.feature_names.items()
@@ -171,7 +204,7 @@ class MuDataDataset(MofaFlexDataset):
     def feature_names(self) -> dict[str, NDArray[str]]:
         return {viewname: mod.var_names.to_numpy() for viewname, mod in self._data.mod.items()}
 
-    def __getitems__(self, idx: dict[str, int | list[int]]) -> dict[str, dict]:
+    def __getitems__(self, idx: Mapping[str, int | Sequence[int]]) -> dict[str, dict]:
         data = {}
         nonmissing_obs = {}
         nonmissing_var = {}
@@ -320,7 +353,7 @@ class MuDataDataset(MofaFlexDataset):
         return pd.concat(dfs, axis=0, ignore_index=True)
 
     def get_covariates(
-        self, obs_key: dict[str, str] | None = None, obsm_key: dict[str, str] | None = None
+        self, obs_key: Mapping[str, str] | None = None, obsm_key: Mapping[str, str] | None = None
     ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
         covariates, covariates_names = {}, {}
 
@@ -387,7 +420,7 @@ class MuDataDataset(MofaFlexDataset):
             covariates[group_name] = ccovs
         return covariates, covariates_names
 
-    def get_annotations(self, varm_key: dict[str, str]) -> tuple[dict[str, NDArray], dict[str, NDArray]]:
+    def get_annotations(self, varm_key: Mapping[str, str]) -> tuple[Mapping[str, NDArray], Mapping[str, NDArray]]:
         annotations, annotations_names = {}, {}
         if varm_key is not None:
             for modname, key in varm_key.items():
@@ -420,7 +453,7 @@ class MuDataDataset(MofaFlexDataset):
         return data
 
     def _apply_to_view(
-        self, view_name: str, func: ApplyToCallable[T], gkwargs: dict[str, dict[str, Any]], **kwargs
+        self, view_name: str, func: ApplyToCallable[T], gkwargs: Mapping[str, Mapping[str, Any]], **kwargs
     ) -> dict[str, T]:
         data = self._data_for_apply()
         ret = {}
@@ -430,7 +463,7 @@ class MuDataDataset(MofaFlexDataset):
         return ret
 
     def _apply_to_group(
-        self, group_name: str, func: ApplyToCallable[T], vkwargs: dict[str, dict[str, Any]], **kwargs
+        self, group_name: str, func: ApplyToCallable[T], vkwargs: Mapping[str, Mapping[str, Any]], **kwargs
     ) -> dict[str, T]:
         data = self._data_for_apply()
         ret = {}
@@ -441,7 +474,7 @@ class MuDataDataset(MofaFlexDataset):
         return ret
 
     def _apply_by_group_view(
-        self, func: ApplyCallable[T], gvkwargs: dict[str, dict[str, dict[str, Any]]], **kwargs
+        self, func: ApplyCallable[T], gvkwargs: Mapping[str, Mapping[str, Mapping[str, Any]]], **kwargs
     ) -> dict[str, dict[str, T]]:
         data = self._data_for_apply()
         ret = {}
@@ -453,7 +486,9 @@ class MuDataDataset(MofaFlexDataset):
             ret[group_name] = cret
         return ret
 
-    def _apply_by_view(self, func: ApplyCallable[T], vkwargs: dict[str, dict[str, Any]], **kwargs) -> dict[str, T]:
+    def _apply_by_view(
+        self, func: ApplyCallable[T], vkwargs: Mapping[str, Mapping[str, Any]], **kwargs
+    ) -> dict[str, T]:
         data = self._data
         if (
             not isinstance(self._sample_selection, slice)
@@ -479,7 +514,9 @@ class MuDataDataset(MofaFlexDataset):
             ret[modname] = apply_to_nested(cret, from_dask)
         return ret
 
-    def _apply_by_group(self, func: ApplyCallable[T], gkwargs: dict[str, dict[str, Any]], **kwargs) -> dict[str, T]:
+    def _apply_by_group(
+        self, func: ApplyCallable[T], gkwargs: Mapping[str, Mapping[str, Any]], **kwargs
+    ) -> dict[str, T]:
         data = self._data_for_apply()
         ret = {}
         for group_name, group_idx in self._groups.items():

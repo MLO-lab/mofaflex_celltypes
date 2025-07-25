@@ -135,3 +135,19 @@ def warn_dask(logger: logging.Logger | None = None):
         logger = _logger
     logger.warning("Could not import dask. Data arrays may be copied, resulting in high memory usage.")
     _warned_dask = True
+
+
+def select_anndata_layer(adata: AnnData, layer: str | None = None):
+    if layer is None:
+        return adata
+    else:
+        return AnnData(
+            X=adata.layers[layer],
+            obs=adata.obs,
+            var=adata.var,
+            obsm=adata.obsm,
+            varm=adata.varm,
+            obsp=adata.obsp,
+            varp=adata.varp,
+            uns=adata.uns,
+        )

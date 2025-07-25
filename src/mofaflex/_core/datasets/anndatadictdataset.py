@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from functools import reduce
 from typing import Any, Literal, TypeVar, Union
 
@@ -11,7 +11,7 @@ from scipy import sparse
 
 from ..settings import settings
 from .base import ApplyCallable, ApplyToCallable, MofaFlexDataset, Preprocessor
-from .utils import AlignmentMap, anndata_to_dask, apply_to_nested, from_dask, have_dask, warn_dask
+from .utils import AlignmentMap, anndata_to_dask, apply_to_nested, from_dask, have_dask, select_anndata_layer, warn_dask
 
 T = TypeVar("T")
 _logger = logging.getLogger(__name__)
@@ -46,18 +46,20 @@ class AnnDataDictDataset(MofaFlexDataset):
     # A map from local to global views is given by argsort(global_to_data[global_to_data >= 0])
     def __init__(
         self,
-        data: dict[str, dict[str, ad.AnnData]],
+        data: Mapping[str, Mapping[str, ad.AnnData]],
         *,
+        layer: Mapping[str, Mapping[str, str | None] | str | None] | str | None = None,
         use_obs: Literal["union", "intersection"] = "union",
         use_var: Literal["union", "intersection"] = "union",
         preprocessor: Preprocessor | None = None,
         cast_to: Union[np.ScalarType] | None = np.float32,  # noqa UP007
         subset_var: str | None = "highly_variable",
-        sample_names: dict[str, NDArray[str]] | None = None,
-        feature_names: dict[str, NDArray[str]] | None = None,
+        sample_names: Mapping[str, NDArray[str]] | None = None,
+        feature_names: Mapping[str, NDArray[str]] | None = None,
         **kwargs,
     ):
         super().__init__(data, preprocessor=preprocessor, cast_to=cast_to)
+        self._select_layer(layer)
         self._use_obs = use_obs
         self._use_var = use_var
 
@@ -80,11 +82,35 @@ class AnnDataDictDataset(MofaFlexDataset):
         self.reindex_samples(sample_names)
         self.reindex_features(feature_names)
 
+    def _select_layer(self, layer):
+        if layer is None:
+            return
+
+        if isinstance(layer, str):
+            layerfunc = lambda group_name, view_name: layer
+        elif isinstance(layer, Mapping) and all(
+            isinstance(group, Mapping) and all(isinstance(view, str | None) for view in group.values())
+            for group in layer.values()
+        ):
+            layerfunc = lambda group_name, view_name: layer[group_name].get(view_name)
+        elif isinstance(layer, Mapping) and all(isinstance(view, str | None) for view in layer.values()):
+            layerfunc = lambda group_name, view_name: layer.get(view_name)
+        else:
+            raise TypeError("Unknown type of `layer` argument.")
+
+        self._data = {
+            group_name: {
+                view_name: select_anndata_layer(view, layerfunc(group_name, view_name))
+                for view_name, view in group.items()
+            }
+            for group_name, group in self._data.items()
+        }
+
     def _combine_func(self, attr: Literal["obs", "var"]):
         use = getattr(self, f"_use_{attr}")
         return (lambda x, y: x.union(y, sort=False)) if use == "union" else (lambda x, y: x.intersection(y))
 
-    def _reindex_attr(self, attr: Literal["obs", "var"], aligned: dict[str, NDArray[str]] | None = None):
+    def _reindex_attr(self, attr: Literal["obs", "var"], aligned: Mapping[str, NDArray[str]] | None = None):
         if aligned is None:
             aligned = getattr(self, f"_aligned_{attr}")
         map = {}
@@ -101,7 +127,7 @@ class AnnDataDictDataset(MofaFlexDataset):
             map[group_name] = gmap
         setattr(self, f"_{attr}map", map)
 
-    def reindex_samples(self, sample_names: dict[str, NDArray[str]] | None = None):
+    def reindex_samples(self, sample_names: Mapping[str, NDArray[str]] | None = None):
         func = self._combine_func("obs")
         aligned = {}
         if sample_names is not None:
@@ -129,7 +155,7 @@ class AnnDataDictDataset(MofaFlexDataset):
         self._aligned_obs = aligned
         self._reindex_attr("obs", aligned)
 
-    def reindex_features(self, feature_names: dict[str, NDArray[str]] | None = None):
+    def reindex_features(self, feature_names: Mapping[str, NDArray[str]] | None = None):
         func = self._combine_func("var")
         aligned = {}
         if feature_names is not None:
@@ -166,8 +192,8 @@ class AnnDataDictDataset(MofaFlexDataset):
 
     @staticmethod
     def _accepts_input(data):
-        return isinstance(data, dict) and all(
-            isinstance(group, dict) and all(isinstance(view, ad.AnnData) for view in group.values())
+        return isinstance(data, Mapping) and all(
+            isinstance(group, Mapping) and all(isinstance(view, ad.AnnData) for view in group.values())
             for group in data.values()
         )
 
@@ -195,7 +221,7 @@ class AnnDataDictDataset(MofaFlexDataset):
     def feature_names(self) -> dict[str, NDArray[str]]:
         return {view_name: var.to_numpy() for view_name, var in self._aligned_var.items()}
 
-    def __getitems__(self, idx: dict[str, int | list[int]]) -> dict[str, dict]:
+    def __getitems__(self, idx: Mapping[str, int | Sequence[int]]) -> dict[str, dict]:
         data = {}
         nonmissing_obs = {}
         nonmissing_var = {}
@@ -365,7 +391,7 @@ class AnnDataDictDataset(MofaFlexDataset):
         return pd.concat(dfs, axis=0, ignore_index=True)
 
     def get_covariates(
-        self, obs_key: dict[str, str] | None = None, obsm_key: dict[str, str] | None = None
+        self, obs_key: Mapping[str, str] | None = None, obsm_key: Mapping[str, str] | None = None
     ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
         covariates, covariates_names = {}, {}
         if obs_key is None:
@@ -416,7 +442,7 @@ class AnnDataDictDataset(MofaFlexDataset):
             covariates[group_name] = ccovs
         return covariates, covariates_names
 
-    def get_annotations(self, varm_key: dict[str, str]) -> tuple[dict[str, NDArray], dict[str, NDArray]]:
+    def get_annotations(self, varm_key: Mapping[str, str]) -> tuple[dict[str, NDArray], dict[str, NDArray]]:
         annotations, annotations_names = {}, {}
         if varm_key is not None:
             for view_name, key in varm_key.items():
@@ -461,7 +487,7 @@ class AnnDataDictDataset(MofaFlexDataset):
         return view
 
     def _apply_to_view(
-        self, view_name: str, func: ApplyToCallable[T], gkwargs: dict[str, dict[str, Any]], **kwargs
+        self, view_name: str, func: ApplyToCallable[T], gkwargs: Mapping[str, Mapping[str, Any]], **kwargs
     ) -> dict[str, T]:
         ret = {}
         for group_name in self.group_names:
@@ -472,7 +498,7 @@ class AnnDataDictDataset(MofaFlexDataset):
         return ret
 
     def _apply_to_group(
-        self, group_name: str, func: ApplyToCallable[T], vkwargs: dict[str, dict[str, Any]], **kwargs
+        self, group_name: str, func: ApplyToCallable[T], vkwargs: Mapping[str, Mapping[str, Any]], **kwargs
     ) -> dict[str, T]:
         ret = {}
         for view_name in self.view_names:
@@ -483,7 +509,7 @@ class AnnDataDictDataset(MofaFlexDataset):
         return ret
 
     def _apply_by_group_view(
-        self, func: ApplyCallable[T], gvkwargs: dict[str, dict[str, dict[str, Any]]], **kwargs
+        self, func: ApplyCallable[T], gvkwargs: Mapping[str, Mapping[str, Mapping[str, Any]]], **kwargs
     ) -> dict[str, dict[str, T]]:
         havedask = have_dask()
         if not havedask and settings.use_dask:
@@ -499,7 +525,9 @@ class AnnDataDictDataset(MofaFlexDataset):
             ret[group_name] = cret
         return ret
 
-    def _apply_by_view(self, func: ApplyCallable[T], vkwargs: dict[str, dict[str, Any]], **kwargs) -> dict[str, T]:
+    def _apply_by_view(
+        self, func: ApplyCallable[T], vkwargs: Mapping[str, Mapping[str, Any]], **kwargs
+    ) -> dict[str, T]:
         havedask = have_dask()
         ret = {}
         if not havedask and settings.use_dask:
@@ -541,7 +569,9 @@ class AnnDataDictDataset(MofaFlexDataset):
 
         return ret
 
-    def _apply_by_group(self, func: ApplyCallable[T], gkwargs: dict[str, dict[str, Any]], **kwargs) -> dict[str, T]:
+    def _apply_by_group(
+        self, func: ApplyCallable[T], gkwargs: Mapping[str, Mapping[str, Any]], **kwargs
+    ) -> dict[str, T]:
         havedask = have_dask()
         ret = {}
         if not havedask and settings.use_dask:
