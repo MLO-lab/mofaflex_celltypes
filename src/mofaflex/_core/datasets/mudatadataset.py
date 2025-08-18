@@ -77,6 +77,13 @@ class MuDataDataset(MofaFlexDataset):
         feature_names: Mapping[str, NDArray[str]] | None = None,
         **kwargs,
     ):
+        # MuData objects with axis=1 can violate our fundamendal data model of local and global alignment:
+        # Since group assignments are taken from the global .obs, the same group may be present in multiple
+        # AnnData objects with only partially overlapping features. In this case it is not clear what the
+        # local samples and features should be.
+        if mudata.axis != 0:
+            raise ValueError("Only MuData objects with axis=0 are supported.")
+
         super().__init__(mudata, preprocessor=preprocessor, cast_to=cast_to)
         self._orig_data = _select_layers(self._data, layer)
         self._group_by = group_by
