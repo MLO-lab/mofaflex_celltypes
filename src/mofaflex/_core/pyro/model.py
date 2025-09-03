@@ -165,7 +165,9 @@ class MofaFlexModel(PyroModule):
         # guiding variables
         self._guiding_vars_n_categories = guiding_vars_n_categories
         self._guiding_vars_factors = guiding_vars_factors
-        self._guiding_vars_scales = guiding_vars_scales
+
+        total_n_features = 0.1 * sum(self._n_features.values())
+        self._guiding_vars_scales = {name: scale * total_n_features for name, scale in guiding_vars_scales.items()}
 
         self._guiding_vars_likelihoods = PyroModuleDict(
             {
