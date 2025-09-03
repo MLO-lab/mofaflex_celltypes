@@ -51,7 +51,7 @@ def anndata_dict(random_adata, rng):
         ("covariates_obs_key", "covar"),
         ("covariates_obsm_key", None),
         ("covariates_obsm_key", "covar"),
-        ("guiding_vars_obs_keys", {"gvar1": "gvar_normal", "gvar2": "gvar_bernoulli", "gvar3": "gvar_categorical"}),
+        ("guiding_vars_obs_keys", ["gvar_normal", "gvar_bernoulli", "gvar_categorical"]),
         ("use_obs", "union"),
         ("use_obs", "intersection"),
         ("use_var", "union"),
@@ -89,7 +89,12 @@ def test_integration(anndata_dict, tmp_path, attrname, attrvalue, usedask):
     opts = (
         DataOptions(plot_data_overview=False, annotations_varm_key="annot"),
         ModelOptions(
-            n_factors=5, guiding_vars_likelihoods={"gvar1": "Normal", "gvar2": "Bernoulli", "gvar3": "Categorical"}
+            n_factors=5,
+            guiding_vars_likelihoods={
+                "gvar_normal": "Normal",
+                "gvar_bernoulli": "Bernoulli",
+                "gvar_categorical": "Categorical",
+            },
         ),
         TrainingOptions(max_epochs=2, seed=42, save_path=False),
     )

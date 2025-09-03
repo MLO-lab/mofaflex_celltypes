@@ -109,7 +109,7 @@ class DataOptions(_Options):
     covariates_obsm_key: Mapping[str, str] | str | None = None
     """Key of .obsm attribute of each :class:`AnnData<anndata.AnnData>` object that contains covariate values."""
 
-    guiding_vars_obs_keys: Mapping[str, Mapping[str, str]] | Mapping[str, str] | None = None
+    guiding_vars_obs_keys: str | Sequence[str] | Mapping[str, Mapping[str, str]] | None = None
     """Keys of .obs attribute of each :class:`AnnData<anndata.AnnData>` object that contains guiding variable values."""
 
     use_obs: Literal["union", "intersection"] | None = "union"
@@ -582,8 +582,6 @@ class MOFAFLEX:
             list(self._data_opts.guiding_vars_obs_keys.keys()) if self._data_opts.guiding_vars_obs_keys else []
         )
         self._n_guiding_vars = len(guiding_vars_names)
-        if self._n_guiding_vars == 0:
-            return
 
         # update global number of factors
         self._model_opts.n_factors = self._model_opts.n_factors + self._n_guiding_vars
@@ -784,14 +782,17 @@ class MOFAFLEX:
 
     def _adjust_options(self, data: Mapping[str, Mapping[str, AnnData]]):
         # convert input arguments to dictionaries if necessary
-        guiding_vars_names = (
-            self._data_opts.guiding_vars_obs_keys.keys() if self._data_opts.guiding_vars_obs_keys else []
-        )
-        for guiding_var_name in guiding_vars_names:
-            if isinstance(self._data_opts.guiding_vars_obs_keys[guiding_var_name], str):
-                self._data_opts.guiding_vars_obs_keys[guiding_var_name] = dict.fromkeys(
-                    data.group_names, self._data_opts.guiding_vars_obs_keys[guiding_var_name]
-                )
+        if self._data_opts.guiding_vars_obs_keys is not None:
+            if isinstance(self._data_opts.guiding_vars_obs_keys, str):
+                self._data_opts.guiding_vars_obs_keys = [self._data_opts.guiding_vars_obs_keys]
+            if isinstance(self._data_opts.guiding_vars_obs_keys, Sequence):
+                self._data_opts.guiding_vars_obs_keys = {
+                    obs_key: dict.fromkeys(data.group_names, obs_key)
+                    for obs_key in self._data_opts.guiding_vars_obs_keys
+                }
+            guiding_vars_names = self._data_opts.guiding_vars_obs_keys.keys()
+        else:
+            guiding_vars_names = ()
 
         for opt_name, keys in zip(
             (
