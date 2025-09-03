@@ -862,19 +862,18 @@ class MOFAFLEX:
                 }
 
         # guided factors
-        guiding_vars_factors = {}
-        guiding_vars_names = (
-            self._data_opts.guiding_vars_obs_keys.keys() if self._data_opts.guiding_vars_obs_keys else []
-        )
-        for i, guiding_var_name in enumerate(guiding_vars_names):
-            guiding_vars_factors[guiding_var_name] = self._n_informed_factors + i
+        guiding_vars_factors = {
+            self.factor_names[self.n_dense_factors + i]: self.n_dense_factors + i for i in range(self.n_guided_factors)
+        }
 
-        guiding_vars = GuidingVarsDataset(data, self._data_opts.guiding_vars_obs_keys)
         covariates = CovariatesDataset(data, self._data_opts.covariates_obs_key, self._data_opts.covariates_obsm_key)
+        datasets = {"data": data, "covariates": covariates}
 
         # get unique categories for each guiding variable
         guiding_vars_n_categories = {}
-        if self._data_opts.guiding_vars_obs_keys:
+        if self.n_guided_factors > 0:
+            datasets["guiding_vars"] = guiding_vars = GuidingVarsDataset(data, self._data_opts.guiding_vars_obs_keys)
+
             for guiding_var_name, guiding_var_likelihood in self._model_opts.guiding_vars_likelihoods.items():
                 if guiding_var_likelihood == "Categorical":
                     guiding_vars_categories = set()
@@ -887,7 +886,7 @@ class MOFAFLEX:
 
                 else:
                     # if not categorical, set to default
-                    guiding_vars_n_categories[guiding_var_name] = 1
+                    guiding_vars_n_categories[guiding_var_name] = 0
 
         init_tensor = self._initialize_factors(data)
 
@@ -911,7 +910,7 @@ class MOFAFLEX:
             torch.Tensor: lambda x, **kwargs: x[0].to(self._train_opts.device, non_blocking=True),
             slice: lambda x, **kwargs: x[0],
         }
-        dataset = StackDataset(data=data, covariates=covariates, guiding_vars=guiding_vars)
+        dataset = StackDataset(**datasets)
         if singlebatch:
             batch = collate(
                 (default_convert(dataset.__getitems__(sample_all_data_as_one_batch(data))),),
@@ -939,14 +938,18 @@ class MOFAFLEX:
                 if singlebatch:
                     with self._train_opts.device:
                         epoch_loss += svi.step(
-                            **batch["data"], covariates=batch["covariates"], guiding_vars=batch["guiding_vars"]
+                            **batch["data"],
+                            covariates=batch["covariates"],
+                            guiding_vars=batch["guiding_vars"] if self.n_guided_factors > 0 else None,
                         )
                 else:
                     for batch in loader:
                         batch = collate((batch,), collate_fn_map=collate_fn_map)
                         with self._train_opts.device:
                             epoch_loss += svi.step(
-                                **batch["data"], covariates=batch["covariates"], guiding_vars=batch["guiding_vars"]
+                                **batch["data"],
+                                covariates=batch["covariates"],
+                                guiding_vars=batch["guiding_vars"] if self.n_guided_factors > 0 else None,
                             )
                 train_loss_elbo.append(epoch_loss)
                 if (

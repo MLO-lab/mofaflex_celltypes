@@ -56,23 +56,21 @@ class CovariatesDataset(Dataset):
 
         # if data is categorical, get unique categories
         categories = set()
-        have_nans = False
         for group_covars in covariates.values():
             for view_covars in group_covars.values():
                 if view_covars.dtype == np.object_:
                     non_nan_values = view_covars[~pd.isnull(view_covars)]
                     categories |= set(non_nan_values)
-                    have_nans = non_nan_values.size < view_covars.size
 
         # map categories to floats
-        categories_mapping = {cat: float(i) if have_nans else i for i, cat in enumerate(sorted(categories))}
-        for group_name, group_covars in covariates.items():
+        categories_mapping = {cat: i for i, cat in enumerate(sorted(categories))}
+        for group_covars in covariates.values():
             for view_name, view_covars in group_covars.items():
                 if view_covars.dtype == np.object_:
-                    view_covars_mapped = np.full_like(view_covars, fill_value=np.nan, dtype=float)
+                    view_covars_mapped = np.full_like(view_covars, fill_value=np.nan, dtype=np.float32)
                     for k, v in categories_mapping.items():
                         view_covars_mapped[view_covars == k] = v
-                    covariates[group_name][view_name] = view_covars_mapped
+                    group_covars[view_name] = view_covars_mapped
 
         # ensure the a covariate value is consistent across views (nanmean or first)
         self.covariates = {}
@@ -82,7 +80,7 @@ class CovariatesDataset(Dataset):
                 idx = np.isfinite(group_covars_stacked)
                 self.covariates[group_name] = np.where(
                     np.any(idx, axis=0),
-                    group_covars_stacked[np.argmax(idx, axis=0)[:, 0], np.arange(idx.shape[1])],
+                    np.take_along_axis(group_covars_stacked, np.argmax(idx, axis=0, keepdims=True), axis=0)[0, ...],
                     np.nan,
                 )
 
@@ -126,11 +124,7 @@ class StackDataset(StackDataset):
 class GuidingVarsDataset(StackDataset):
     def __init__(self, data: MofaFlexDataset, guiding_vars_obs_keys: dict[str, dict[str, str]] | None = None):
         datasets = {}
-        if guiding_vars_obs_keys:
-            for guiding_var_name, obs_key in guiding_vars_obs_keys.items():
-                datasets[guiding_var_name] = CovariatesDataset(data, obs_key=obs_key)
-
-        else:
-            datasets["dummy_guiding_var"] = CovariatesDataset(data)
+        for guiding_var_name, obs_key in guiding_vars_obs_keys.items():
+            datasets[guiding_var_name] = CovariatesDataset(data, obs_key=obs_key)
 
         super().__init__(**datasets)

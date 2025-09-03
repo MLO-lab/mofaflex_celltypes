@@ -185,13 +185,12 @@ class MofaFlexModel(PyroModule):
         self._guiding_scales = PyroParameterDict()
 
         for guiding_var_name in self._guiding_vars_names:
+            weights_dim = max(self._guiding_vars_n_categories[guiding_var_name], 1)
             self._guiding_locs[guiding_var_name] = PyroParam(
-                torch.full([self._guiding_vars_n_categories[guiding_var_name], 2], init_loc),
-                constraint=constraints.real,
+                torch.full([weights_dim, 2], init_loc), constraint=constraints.real
             )
             self._guiding_scales[guiding_var_name] = PyroParam(
-                torch.full([self._guiding_vars_n_categories[guiding_var_name], 2], init_scale),
-                constraint=constraints.softplus_positive,
+                torch.full([weights_dim, 2], init_scale), constraint=constraints.softplus_positive
             )
 
     _sample_plate_dim = -2
@@ -238,7 +237,7 @@ class MofaFlexModel(PyroModule):
         return sample_plates, feature_plates, guiding_var_plate, factors_plate
 
     def _model_guiding_vars_weights_normal(self, guiding_var_name, **kwargs):
-        weights_dim = self._guiding_vars_n_categories[guiding_var_name]
+        weights_dim = max(self._guiding_vars_n_categories[guiding_var_name], 1)
         return pyro.sample(
             f"guiding_vars_w_{guiding_var_name}",
             dist.Normal(torch.zeros(weights_dim, 2), torch.ones(weights_dim, 2)).to_event(
@@ -272,12 +271,6 @@ class MofaFlexModel(PyroModule):
             if self._nonnegative_weights[view_name]:
                 weights[view_name] = self._pos_transform(view_weights)
 
-        # sample guiding variable weights
-        guided_vars = {}
-        for guiding_var_name in self._guiding_vars_names:
-            guided_vars[guiding_var_name] = self._model_guiding_vars_weights_normal(guiding_var_name)
-
-        # sample observations
         for group_name, group in data.items():
             gnonmissing_samples = nonmissing_samples[group_name]
             gnonmissing_features = nonmissing_features[group_name]
@@ -304,20 +297,19 @@ class MofaFlexModel(PyroModule):
                     nonmissing_features=vnonmissing_features,
                 )
 
-            # guiding variables
-            for guiding_var_name in self._guiding_vars_names:
-                if group_name not in guiding_vars[guiding_var_name]:
-                    continue
+        for guiding_var_name, guiding_var_factor_idx in self._guiding_vars_factors.items():
+            w_guiding = self._model_guiding_vars_weights_normal(guiding_var_name)
 
-                z_guiding = factors[group_name][self._guiding_vars_factors[guiding_var_name], 0]
-                w_guiding = guided_vars[guiding_var_name]
+            for group_name, guiding_var in guiding_vars[guiding_var_name].items():
+                z_guiding = factors[group_name][guiding_var_factor_idx]
 
-                # (n_cats, 1) + (n_cats, 1) * (n_samples,)
-                loc = w_guiding[:, 0, None] + w_guiding[:, 1, None] * z_guiding  # (n_cats, n_samples)
-                obs_guiding_vars = guiding_vars[guiding_var_name][group_name]
+                # (1, n_cats) + (1, n_cats) * (n_samples, 1)
+                loc = w_guiding[None, :, 0] + w_guiding[None, :, 1] * z_guiding  # (n_samples, n_cats)
+                if self._guiding_vars_n_categories[guiding_var_name] > 0:
+                    loc = loc[..., None, :]  # Categorical likelihood needs separate dimension for categories
 
                 self._guiding_vars_likelihoods[guiding_var_name].model(
-                    data=obs_guiding_vars,
+                    data=guiding_var,
                     estimate=loc,
                     group_name=group_name,
                     scale=self._guiding_vars_scales[guiding_var_name],
@@ -337,15 +329,14 @@ class MofaFlexModel(PyroModule):
         for prior in self._weights:
             prior.guide(factor_plate, feature_plates)
 
-        for guiding_var_name in self._guiding_vars_names:
-            self._guide_guiding_vars_weights_normal(guiding_var_name)
-
         for group_name, group in data.items():
             for view_name in group.keys():
                 self._likelihoods[view_name].guide(group_name, sample_plates[group_name], feature_plates[view_name])
 
-            for guiding_var_name in self._guiding_vars_names:
-                if group_name in guiding_vars[guiding_var_name]:
+        if len(self._guiding_vars_factors) > 0:
+            for guiding_var_name, guiding_var in guiding_vars.items():
+                self._guide_guiding_vars_weights_normal(guiding_var_name)
+                for group_name in guiding_var.keys():
                     self._guiding_vars_likelihoods[guiding_var_name].guide(
                         group_name, sample_plates[group_name], guiding_var_plate
                     )
