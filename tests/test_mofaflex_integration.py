@@ -75,17 +75,17 @@ def anndata_dict(random_adata, rng):
         ("init_factors", "pca"),
         ("save_path", None),
         ("save_path", "test.h5"),
-        ("batch_size", 0),
-        ("batch_size", 100),
     ],
 )
+@pytest.mark.parametrize("n_particles", [1, 5])
+@pytest.mark.parametrize("batch_size", [0, 257])
 @pytest.mark.parametrize("usedask", [False, True])
 @pytest.mark.xfail(
     Version(ad.__version__) >= Version("0.12.0rc1") and Version(ad.__version__) < Version("0.12.0"),
     reason="anndata bug: https://github.com/scverse/anndata/pull/1975",
     strict=False,
 )
-def test_integration(anndata_dict, tmp_path, attrname, attrvalue, usedask):
+def test_integration(anndata_dict, tmp_path, attrname, attrvalue, n_particles, batch_size, usedask):
     opts = (
         DataOptions(plot_data_overview=False, annotations_varm_key="annot"),
         ModelOptions(
@@ -96,7 +96,7 @@ def test_integration(anndata_dict, tmp_path, attrname, attrvalue, usedask):
                 "gvar_categorical": "Categorical",
             },
         ),
-        TrainingOptions(max_epochs=2, seed=42, save_path=False),
+        TrainingOptions(max_epochs=2, seed=42, save_path=False, batch_size=batch_size, n_particles=n_particles),
     )
     if attrname == "save_path" and isinstance(attrvalue, str):
         attrvalue = str(tmp_path / attrvalue)
@@ -153,17 +153,19 @@ def test_integration_single_var(anndata_dict, usedask):
         ("warp_groups", ["group_1", "group_2"]),
     ],
 )
+@pytest.mark.parametrize("n_particles", [1, 5])
+@pytest.mark.parametrize("batch_size", [0, 257])
 @pytest.mark.parametrize("usedask", [False, True])
 @pytest.mark.xfail(
     Version(ad.__version__) >= Version("0.12.0rc1") and Version(ad.__version__) < Version("0.12.0"),
     reason="anndata bug: https://github.com/scverse/anndata/pull/1975",
     strict=False,
 )
-def test_integration_gp(anndata_dict, attrname, attrvalue, usedask):
+def test_integration_gp(anndata_dict, attrname, attrvalue, n_particles, batch_size, usedask):
     opts = (
         DataOptions(covariates_obs_key="covar", plot_data_overview=False),
         ModelOptions(n_factors=5, factor_prior="GP"),
-        TrainingOptions(max_epochs=2, seed=42, mofa_compat=True),
+        TrainingOptions(max_epochs=2, seed=42, mofa_compat=True, batch_size=batch_size, n_particles=n_particles),
     )
     smooth_opts = SmoothOptions(n_inducing=20, warp_interval=1)
     setattr(smooth_opts, attrname, attrvalue)

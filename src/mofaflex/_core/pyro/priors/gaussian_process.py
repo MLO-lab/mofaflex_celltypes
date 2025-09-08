@@ -87,7 +87,10 @@ class GP(Prior):
 
         nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
         with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
-            f = pyro.sample("gp.f", f_dist).reshape(self._full_gp_shape)
+            f = pyro.sample("gp.f", f_dist)
+        new_f_shape = list(f.shape)
+        new_f_shape[-len(self._full_gp_shape) :] = self._full_gp_shape
+        f = f.reshape(new_f_shape)
         if factor_plate.dim > nonfactor_plate.dim:
             f = f.swapaxes(factor_plate.dim, nonfactor_plate.dim)
 

@@ -303,12 +303,23 @@ class MofaFlexModel(PyroModule):
             w_guiding = self._model_guiding_vars_weights_normal(guiding_var_name)
 
             for group_name, guiding_var in guiding_vars[guiding_var_name].items():
-                z_guiding = factors[group_name][guiding_var_factor_idx]
+                z_guiding = factors[group_name].select(factor_plate.dim, guiding_var_factor_idx)
 
-                # (1, n_cats) + (1, n_cats) * (n_samples, 1)
-                loc = w_guiding[None, :, 0] + w_guiding[None, :, 1] * z_guiding  # (n_samples, n_cats)
+                if z_guiding.ndim >= abs(factor_plate.dim):  # n_particles > 1
+                    z_guiding = z_guiding.unsqueeze(1).unsqueeze(1)
+
+                    # (n_particles, 1, 1, 1, n_cats) + (n_particles, 1, 1, 1, n_cats) * (n_particles, 1, 1, n_samples, 1)
+                    loc = (
+                        w_guiding[..., :, 0] + w_guiding[..., :, 1] * z_guiding
+                    )  # (n_particles, 1, 1, n_samples, n_cats)
+                else:
+                    # (1, n_cats) + (1, n_cats) * (n_samples, 1)
+                    loc = w_guiding[None, :, 0] + w_guiding[None, :, 1] * z_guiding  # (n_samples, n_cats)
+
                 if self._guiding_vars_n_categories[guiding_var_name] > 0:
-                    loc = loc[..., None, :]  # Categorical likelihood needs separate dimension for categories
+                    loc = loc.unsqueeze(
+                        self._feature_plate_dim - 1
+                    )  # Categorical likelihood needs separate dimension for categories
 
                 self._guiding_vars_likelihoods[guiding_var_name].model(
                     data=guiding_var,
