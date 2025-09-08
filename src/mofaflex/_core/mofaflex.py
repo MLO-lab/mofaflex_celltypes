@@ -1297,8 +1297,8 @@ class MOFAFLEX:
                             prior=False,
                         )
 
-                        mean.append(gp_dist.mean.cpu().numpy().squeeze())
-                        std.append(gp_dist.stddev.cpu().numpy().squeeze())
+                        mean.append(gp_dist.mean.cpu().numpy())
+                        std.append(gp_dist.stddev.cpu().numpy())
 
                     gps.mean[group_name] = np.concatenate(mean, axis=1)
                     gps.std[group_name] = np.concatenate(std, axis=1)

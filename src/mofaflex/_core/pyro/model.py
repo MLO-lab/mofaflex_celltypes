@@ -343,7 +343,9 @@ class MofaFlexModel(PyroModule):
             prior.guide(factor_plate, feature_plates)
 
         for group_name, group in data.items():
-            for view_name in group.keys():
+            for view_name, view_obs in group.items():
+                if view_obs.numel() == 0:
+                    continue
                 self._likelihoods[view_name].guide(group_name, sample_plates[group_name], feature_plates[view_name])
 
         if len(self._guiding_vars_factors) > 0:
