@@ -186,8 +186,11 @@ class MofaFlexModel(PyroModule):
         self._guiding_locs = PyroParameterDict()
         self._guiding_scales = PyroParameterDict()
 
+        self._guiding_vars_weights_dims = {}
         for guiding_var_name in self._guiding_vars_names:
-            weights_dim = max(self._guiding_vars_n_categories[guiding_var_name], 1)
+            self._guiding_vars_weights_dims[guiding_var_name] = weights_dim = max(
+                self._guiding_vars_n_categories[guiding_var_name], 1
+            )
             self._guiding_locs[guiding_var_name] = PyroParam(
                 torch.full([weights_dim, 2], init_loc), constraint=constraints.real
             )
@@ -232,30 +235,65 @@ class MofaFlexModel(PyroModule):
                 dim=self._feature_plate_dim,
             )
 
-        guiding_var_plate = pyro.plate("plate_guiding_vars", 1, subsample=torch.arange(1), dim=self._feature_plate_dim)
+        if len(self._guiding_vars_names):
+            guiding_var_plate = pyro.plate(
+                "plate_guiding_vars", 1, subsample=torch.arange(1), dim=self._feature_plate_dim
+            )
+            guiding_var_coefficients_plate = pyro.plate("plate_guiding_vars_coefficients", 2, dim=-1)
+            guiding_var_categories_plates = {}
+            for guiding_var_name in self._guiding_vars_names:
+                guiding_var_categories_plates[guiding_var_name] = pyro.plate(
+                    f"plate_guiding_var_categories_{guiding_var_name}",
+                    self._guiding_vars_weights_dims[guiding_var_name],
+                    dim=-2,
+                )
+        else:
+            guiding_var_plate = guiding_var_coefficients_plate = guiding_var_categories_plates = None
 
         factors_plate = pyro.plate("plate_factors", self._n_factors, dim=-3)
 
-        return sample_plates, feature_plates, guiding_var_plate, factors_plate
-
-    def _model_guiding_vars_weights_normal(self, guiding_var_name, **kwargs):
-        weights_dim = max(self._guiding_vars_n_categories[guiding_var_name], 1)
-        return pyro.sample(
-            f"guiding_vars_w_{guiding_var_name}",
-            dist.Normal(torch.zeros(weights_dim, 2), torch.ones(weights_dim, 2)).to_event(
-                2
-            ),  # (categories, intercept & slope)
+        return (
+            sample_plates,
+            feature_plates,
+            guiding_var_plate,
+            guiding_var_coefficients_plate,
+            guiding_var_categories_plates,
+            factors_plate,
         )
 
-    def _guide_guiding_vars_weights_normal(self, guiding_var_name, **kwargs):
-        return pyro.sample(
-            f"guiding_vars_w_{guiding_var_name}",
-            dist.Normal(self._guiding_locs[guiding_var_name], self._guiding_scales[guiding_var_name]).to_event(2),
-        )
+    def _model_guiding_vars_weights_normal(
+        self, guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates, **kwargs
+    ):
+        weights_dim = self._guiding_vars_weights_dims[guiding_var_name]
+        with guiding_var_categories_plates[guiding_var_name], guiding_var_coefficients_plate:
+            return pyro.sample(
+                f"guiding_vars_w_{guiding_var_name}",
+                dist.Normal(
+                    torch.zeros(weights_dim, 2), torch.ones(weights_dim, 2)
+                ),  # .to_event(2)  # (categories, intercept & slope)
+            )
+
+    def _guide_guiding_vars_weights_normal(
+        self, guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates, **kwargs
+    ):
+        with guiding_var_categories_plates[guiding_var_name], guiding_var_coefficients_plate:
+            return pyro.sample(
+                f"guiding_vars_w_{guiding_var_name}",
+                dist.Normal(
+                    self._guiding_locs[guiding_var_name], self._guiding_scales[guiding_var_name]
+                ),  # .to_event(2),
+            )
 
     @pyro_method
     def model(self, data, sample_idx, nonmissing_samples, nonmissing_features, covariates, guiding_vars):
-        sample_plates, feature_plates, guiding_var_plate, factor_plate = self._get_plates(subsample=sample_idx)
+        (
+            sample_plates,
+            feature_plates,
+            guiding_var_plate,
+            guiding_var_coefficients_plate,
+            guiding_var_categories_plates,
+            factor_plate,
+        ) = self._get_plates(subsample=sample_idx)
 
         factors = {}
         for prior in self._factors:
@@ -300,21 +338,17 @@ class MofaFlexModel(PyroModule):
                 )
 
         for guiding_var_name, guiding_var_factor_idx in self._guiding_vars_factors.items():
-            w_guiding = self._model_guiding_vars_weights_normal(guiding_var_name)
+            w_guiding = self._model_guiding_vars_weights_normal(
+                guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates
+            )
 
             for group_name, guiding_var in guiding_vars[guiding_var_name].items():
                 z_guiding = factors[group_name].select(factor_plate.dim, guiding_var_factor_idx)
 
-                if z_guiding.ndim >= abs(factor_plate.dim):  # n_particles > 1
-                    z_guiding = z_guiding.unsqueeze(1).unsqueeze(1)
-
-                    # (n_particles, 1, 1, 1, n_cats) + (n_particles, 1, 1, 1, n_cats) * (n_particles, 1, 1, n_samples, 1)
-                    loc = (
-                        w_guiding[..., :, 0] + w_guiding[..., :, 1] * z_guiding
-                    )  # (n_particles, 1, 1, n_samples, n_cats)
-                else:
-                    # (1, n_cats) + (1, n_cats) * (n_samples, 1)
-                    loc = w_guiding[None, :, 0] + w_guiding[None, :, 1] * z_guiding  # (n_samples, n_cats)
+                # (1, n_cats) + (1, n_cats) * (n_samples, 1)
+                loc = (
+                    torch.atleast_2d(w_guiding[..., 0]) + torch.atleast_2d(w_guiding[..., 1]) * z_guiding
+                )  # (n_samples, n_cats)
 
                 if self._guiding_vars_n_categories[guiding_var_name] > 0:
                     loc = loc.unsqueeze(
@@ -334,7 +368,14 @@ class MofaFlexModel(PyroModule):
 
     @pyro_method
     def guide(self, data, sample_idx, nonmissing_samples, nonmissing_features, covariates, guiding_vars):
-        sample_plates, feature_plates, guiding_var_plate, factor_plate = self._get_plates(subsample=sample_idx)
+        (
+            sample_plates,
+            feature_plates,
+            guiding_var_plate,
+            guiding_var_coefficients_plate,
+            guiding_var_categories_plates,
+            factor_plate,
+        ) = self._get_plates(subsample=sample_idx)
 
         for prior in self._factors:
             prior.guide(factor_plate, sample_plates, covariates=covariates)
@@ -350,7 +391,9 @@ class MofaFlexModel(PyroModule):
 
         if len(self._guiding_vars_factors) > 0:
             for guiding_var_name, guiding_var in guiding_vars.items():
-                self._guide_guiding_vars_weights_normal(guiding_var_name)
+                self._guide_guiding_vars_weights_normal(
+                    guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates
+                )
                 for group_name in guiding_var.keys():
                     self._guiding_vars_likelihoods[guiding_var_name].guide(
                         group_name, sample_plates[group_name], guiding_var_plate
