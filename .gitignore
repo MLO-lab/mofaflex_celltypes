@@ -9,6 +9,10 @@ buck-out/
 /.idea/
 /.vscode/
 
+# IDEs
+/.idea/
+/.vscode/
+
 # Compiled files
 .venv/
 __pycache__/
@@ -21,6 +25,7 @@ __pycache__/
 # Tests and coverage
 /data/
 /node_modules/
+/.coverage*
 
 # docs
 /docs/generated/
