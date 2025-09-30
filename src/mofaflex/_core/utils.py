@@ -246,7 +246,7 @@ def impute(
 
         if have_missing_cells:
             nanobs, nanvar = wherenan(data.X)
-            nanobs, nanvar = obsidx[nanobs], varidx[nanvar]
+            nanobs, nanvar = np.atleast_1d(obsidx[nanobs]), np.atleast_1d(varidx[nanvar])
             imputation[nanobs, nanvar] = likelihood.transform_prediction(
                 (factors[nanobs, :] * weights[:, nanvar].T).sum(axis=1), preprocessor.sample_means
             )
