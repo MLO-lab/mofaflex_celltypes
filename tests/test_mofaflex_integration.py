@@ -1,5 +1,6 @@
 # integration tests: only testing if the code runs without errors
 import warnings
+from contextlib import chdir
 from functools import reduce
 
 import anndata as ad
@@ -161,7 +162,7 @@ def test_integration_single_var(anndata_dict, usedask):
     reason="anndata bug: https://github.com/scverse/anndata/pull/1975",
     strict=False,
 )
-def test_integration_gp(anndata_dict, attrname, attrvalue, n_particles, batch_size, usedask):
+def test_integration_gp(anndata_dict, attrname, attrvalue, n_particles, batch_size, usedask, tmp_path):
     opts = (
         DataOptions(covariates_obs_key="covar", plot_data_overview=False),
         ModelOptions(n_factors=5, factor_prior="GP"),
@@ -170,7 +171,7 @@ def test_integration_gp(anndata_dict, attrname, attrvalue, n_particles, batch_si
     smooth_opts = SmoothOptions(n_inducing=20, warp_interval=1)
     setattr(smooth_opts, attrname, attrvalue)
 
-    with settings.override(use_dask=usedask):
+    with chdir(tmp_path), settings.override(use_dask=usedask):
         model = MOFAFLEX(anndata_dict, *opts, smooth_opts)  # noqa F841
 
 

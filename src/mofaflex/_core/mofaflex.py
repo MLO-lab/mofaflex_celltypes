@@ -190,7 +190,7 @@ class TrainingOptions(_Options):
     early_stopper_patience: int = 100
     """Number of steps without relevant improvement to stop training."""
 
-    save_path: str | None = None
+    save_path: Path | str | None = None
     """Path to save model."""
 
     mofa_compat: MOFACompatOption = False
@@ -675,6 +675,8 @@ class MOFAFLEX:
         if self._train_opts.save_path is not False:
             if self._train_opts.save_path is None:
                 self._train_opts.save_path = f"mofaflex_{time.strftime('%Y%m%d_%H%M%S')}.h5"
+            else:
+                self._train_opts.save_path = str(self._train_opts.save_path)
             _logger.info(f"Saving results to {self._train_opts.save_path}...")
             Path(self._train_opts.save_path).parent.mkdir(parents=True, exist_ok=True)
             self._save(self._train_opts.save_path, self._train_opts.mofa_compat, data, preprocessor.feature_means)
