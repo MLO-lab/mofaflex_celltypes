@@ -1,12 +1,8 @@
-import inspect
+from ._plotting import *  # noqa F403
 
-from . import _plotting
+__all__ = []
 
-for _attrname in dir(_plotting):
-    _attr = getattr(_plotting, _attrname)
-    if (
-        (inspect.isroutine(_attr) or inspect.isclass(_attr))
-        and _attr.__module__.startswith(__package__)
-        and not _attrname[0] == "_"
-    ):
-        globals()[_attrname] = _attr
+for _attrname in dir():
+    _attr = locals()[_attrname]
+    if not _attrname[0] == "_" and callable(_attr) and _attr.__module__.startswith(__package__):
+        __all__.append(_attrname)
