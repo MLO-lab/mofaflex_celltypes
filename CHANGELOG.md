@@ -8,8 +8,10 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
-## [Unreleased]
+<!-- ## [Unreleased] -->
 
-## [v0.1.0]
+## [0.1.0]
 
 - Initial release
+
+[0.1.0]: https://github.com/bioFAM/mmofaflex/releases/tag/v0.1.0
