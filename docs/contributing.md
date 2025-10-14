@@ -259,7 +259,7 @@ Please write documentation for new or changed features and use-cases.
 This project uses [sphinx][] with the following features:
 
 - The [myst][] extension allows to write documentation in markdown/Markedly Structured Text
-- [Numpy-style docstrings][numpydoc] (through the [napoloen][numpydoc-napoleon] extension).
+- [Google-style docstrings][google-python-style] (through the [napoleon][numpydoc-napoleon] extension).
 - Jupyter notebooks as tutorials through [myst-nb][] (See [Tutorials with myst-nb](#tutorials-with-myst-nb-and-jupyter-notebooks))
 - [sphinx-autodoc-typehints][], to automatically reference annotated input and output types
 - Citations (like {cite:p}`Virshup_2023`) can be included with [sphinxcontrib-bibtex](https://sphinxcontrib-bibtex.readthedocs.io/)
@@ -270,6 +270,7 @@ See scanpy’s {doc}`scanpy:dev/documentation` for more information on how to wr
 [myst]: https://myst-parser.readthedocs.io/en/latest/intro.html
 [myst-nb]: https://myst-nb.readthedocs.io/en/latest/
 [numpydoc-napoleon]: https://www.sphinx-doc.org/en/master/usage/extensions/napoleon.html
+[google-python-style]: https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings
 [numpydoc]: https://numpydoc.readthedocs.io/en/latest/format.html
 [sphinx-autodoc-typehints]: https://github.com/tox-dev/sphinx-autodoc-typehints
 
