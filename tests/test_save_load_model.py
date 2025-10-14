@@ -93,7 +93,7 @@ def test_save_load_model(setup_teardown):
         "n_samples",
         "n_samples_total",
         "n_factors",
-        "n_dense_factors",
+        "n_uninformed_factors",
         "n_informed_factors",
         "factor_order",
         "factor_names",

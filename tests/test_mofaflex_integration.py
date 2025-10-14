@@ -2,6 +2,7 @@
 import warnings
 from contextlib import chdir
 from functools import reduce
+from pathlib import Path
 
 import anndata as ad
 import numpy as np
@@ -74,7 +75,7 @@ def anndata_dict(random_adata, rng):
         ("init_factors", "random"),
         ("init_factors", "orthogonal"),
         ("init_factors", "pca"),
-        ("save_path", None),
+        ("save_path", Path("test.h5")),
         ("save_path", "test.h5"),
     ],
 )
@@ -99,13 +100,11 @@ def test_integration(anndata_dict, tmp_path, attrname, attrvalue, n_particles, b
         ),
         TrainingOptions(max_epochs=2, seed=42, save_path=False, batch_size=batch_size, n_particles=n_particles),
     )
-    if attrname == "save_path" and isinstance(attrvalue, str):
-        attrvalue = str(tmp_path / attrvalue)
     for opt in opts:
         if hasattr(opt, attrname):
             setattr(opt, attrname, attrvalue)
 
-    with settings.override(use_dask=usedask):
+    with chdir(tmp_path), settings.override(use_dask=usedask):
         model = MOFAFLEX(anndata_dict, *opts)
 
     if attrname == "weight_prior" and attrvalue == "Horseshoe":
@@ -113,7 +112,7 @@ def test_integration(anndata_dict, tmp_path, attrname, attrvalue, n_particles, b
     elif attrname == "guiding_vars_obs_keys":
         assert model._n_guiding_vars == 3
     else:
-        assert model.n_factors == model.n_dense_factors == 5
+        assert model.n_factors == model.n_uninformed_factors == 5
 
 
 @pytest.mark.parametrize("usedask", [False, True])

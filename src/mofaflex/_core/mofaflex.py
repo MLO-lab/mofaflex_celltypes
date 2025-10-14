@@ -378,9 +378,9 @@ class MOFAFLEX:
         return self._model_opts.n_factors
 
     @property
-    def n_dense_factors(self) -> int:
-        """Number of dense (uninformed) factors."""
-        return self._n_dense_factors
+    def n_uninformed_factors(self) -> int:
+        """Number of uninformed factors."""
+        return self._n_uninformed_factors
 
     @property
     def n_informed_factors(self) -> int:
@@ -481,7 +481,7 @@ class MOFAFLEX:
         informed = annotations is not None and len(annotations) > 0
         valid_n_factors = self._model_opts.n_factors is not None and self._model_opts.n_factors > 0
 
-        n_dense_factors = 0
+        n_uninformed_factors = 0
         n_informed_factors = 0
         factor_names = []
 
@@ -505,8 +505,8 @@ class MOFAFLEX:
             )
 
         if self._model_opts.n_factors is not None:
-            n_dense_factors = self._model_opts.n_factors
-            factor_names += [f"Factor {k + 1}" for k in range(n_dense_factors)]
+            n_uninformed_factors = self._model_opts.n_factors
+            factor_names += [f"Factor {k + 1}" for k in range(n_uninformed_factors)]
 
         prior_masks = {}
 
@@ -517,14 +517,14 @@ class MOFAFLEX:
                 factor_names += annotations_names[data.view_names[0]].to_list()
             else:
                 factor_names += [
-                    f"Factor {k + 1}" for k in range(n_dense_factors, n_dense_factors + n_informed_factors)
+                    f"Factor {k + 1}" for k in range(n_uninformed_factors, n_uninformed_factors + n_informed_factors)
                 ]
 
             prior_masks = {vn: vm.astype(np.bool_) for vn, vm in annotations.items()}
 
-        self._n_dense_factors = n_dense_factors
+        self._n_uninformed_factors = n_uninformed_factors
         self._n_informed_factors = n_informed_factors
-        self._model_opts.n_factors = n_dense_factors + n_informed_factors
+        self._model_opts.n_factors = n_uninformed_factors + n_informed_factors
 
         self._factor_names = np.asarray(factor_names)
         self._factor_order = np.arange(self._model_opts.n_factors)
@@ -588,7 +588,11 @@ class MOFAFLEX:
 
         # update global factor names (dense factors + guiding vars + informed factors)
         self._factor_names = np.concatenate(
-            [self._factor_names[: self.n_dense_factors], guiding_vars_names, self._factor_names[self.n_dense_factors :]]
+            [
+                self._factor_names[: self.n_uninformed_factors],
+                guiding_vars_names,
+                self._factor_names[self.n_uninformed_factors :],
+            ]
         )
 
     def _setup_svi(
@@ -850,12 +854,12 @@ class MOFAFLEX:
                 for vn in self.view_names
             }
 
-            if self.n_dense_factors + self.n_guided_factors > 0:
+            if self.n_uninformed_factors + self.n_guided_factors > 0:
                 prior_scales = {
                     vn: np.concatenate(
                         (
                             np.ones(
-                                (self.n_dense_factors + self.n_guided_factors, data.n_features[vn]), dtype=vm.dtype
+                                (self.n_uninformed_factors + self.n_guided_factors, data.n_features[vn]), dtype=vm.dtype
                             ),
                             vm,
                         ),
@@ -866,7 +870,8 @@ class MOFAFLEX:
 
         # guided factors
         guiding_vars_factors = {
-            self.factor_names[self.n_dense_factors + i]: self.n_dense_factors + i for i in range(self.n_guided_factors)
+            self.factor_names[self.n_uninformed_factors + i]: self.n_uninformed_factors + i
+            for i in range(self.n_guided_factors)
         }
 
         covariates = CovariatesDataset(data, self._data_opts.covariates_obs_key, self._data_opts.covariates_obsm_key)
@@ -1315,7 +1320,7 @@ class MOFAFLEX:
             return_type: Format of the returned object.
             ordered: Whether to return the factors ordered by explained variance (highest to lowest).
         """
-        informed_factors = slice(self.n_dense_factors, self.n_dense_factors + self.n_informed_factors)
+        informed_factors = slice(self.n_uninformed_factors, self.n_uninformed_factors + self.n_informed_factors)
         annotations = {
             k: pd.DataFrame(v, index=self.factor_names[informed_factors], columns=self.feature_names[k])
             .astype(bool)
@@ -1384,7 +1389,7 @@ class MOFAFLEX:
             "df_r2_full": self._df_r2_full,
             "df_r2_factors": self._df_r2_factors,
             "pcgse": self._pcgse,
-            "n_dense_factors": self._n_dense_factors,
+            "n_uninformed_factors": self._n_uninformed_factors,
             "n_informed_factors": self._n_informed_factors,
             "factor_names": self._factor_names,
             "factor_order": self._factor_order,
@@ -1449,7 +1454,7 @@ class MOFAFLEX:
         model._df_r2_full = state["df_r2_full"]
         model._df_r2_factors = state["df_r2_factors"]
         model._pcgse = state.get("pcgse")
-        model._n_dense_factors = state["n_dense_factors"]
+        model._n_uninformed_factors = state["n_uninformed_factors"]
         model._n_informed_factors = state["n_informed_factors"]
         model._factor_names = state["factor_names"]
         model._factor_order = state["factor_order"]
