@@ -14,4 +14,4 @@ and this project adheres to [Semantic Versioning][].
 
 - Initial release
 
-[0.1.0]: https://github.com/bioFAM/mmofaflex/releases/tag/v0.1.0
+[0.1.0]: https://github.com/bioFAM/mofaflex/releases/tag/v0.1.0
