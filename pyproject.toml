@@ -79,9 +79,6 @@ urls.Documentation = "https://mofaflex.readthedocs.io/"
 urls.Home-page = "https://github.com/bioFAM/mofaflex"
 urls.Source = "https://github.com/bioFAM/mofaflex"
 
-[tool.hatch.build.targets.wheel]
-packages = [ "src/mofaflex" ]
-
 [tool.hatch.build.hooks.vcs]
 version-file = "src/mofaflex/_version.py"
 
