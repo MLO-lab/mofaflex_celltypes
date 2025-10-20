@@ -25,12 +25,12 @@ class AnnDataDictDataset(MofaFlexDataset):
     # given in sample_names or feature_names. The local alignment is defined to always be a subset of the global
     # alignment, and the data is subsetted (but not reordered) when necessary. The following picture illustrates this:
     #
-    # global:           🞓🞓🞓🞓🞓🞓🞓
-    #                   ｜\/
-    #                   ｜/\
+    # global:         🞓🞓🞓🞓🞓🞓🞓
+    #                 |\/
+    #                 |/\
     # data:     🞓🞓🞓🞓🞓🞓🞓🞓🞓
-    #                   ｜|｜
-    # local:            🞓🞓🞓
+    #                 |||
+    # local:          🞓🞓🞓
     #
     # apply() is guaranteed to pass local views of the data to `func`. To achieve this, we compute two aligment maps:
     # data_to_global = data.get_indexer(global)
