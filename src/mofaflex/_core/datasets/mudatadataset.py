@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TypeVar, Union
+from typing import Any, Literal, TypeVar
 
 import anndata as ad
 import numpy as np
@@ -71,7 +71,7 @@ class MuDataDataset(MofaFlexDataset):
         layer: Mapping[str, str | None] | str | None = None,
         group_by: str | Sequence[str] | None = None,
         preprocessor: Preprocessor | None = None,
-        cast_to: Union[np.ScalarType] | None = np.float32,  # noqa UP007
+        cast_to: np.number | None = np.float32,
         subset_var: str | None = "highly_variable",
         sample_names: Mapping[str, NDArray[str]] | None = None,
         feature_names: Mapping[str, NDArray[str]] | None = None,
@@ -291,9 +291,8 @@ class MuDataDataset(MofaFlexDataset):
         self, arr: NDArray[T], group_name: str, view_name: str, align_to: Literal["samples", "features"], axis: int = 0
     ) -> NDArray[T]:
         if align_to == "samples":
-            subdata = self._data[self._groups[group_name], :]
-            idx = subdata.obsmap[view_name]
-            return np.take(arr, np.argsort(idx)[(idx == 0).sum() :], axis=axis)
+            idx = self.map_local_indices_to_global(slice(None), group_name, view_name, align_to)
+            return np.take(arr, idx, axis=axis)
         else:
             return arr
 
@@ -302,8 +301,13 @@ class MuDataDataset(MofaFlexDataset):
     ) -> NDArray[int]:
         if align_to == "samples":
             subdata = self._data[self._groups[group_name], :]
-            viewidx = subdata.obsmap[view_name]
-            return np.argsort(viewidx)[(viewidx == 0).sum() :][idx]
+            map = subdata.obsmap[view_name]
+            mask = map > 0
+            n = subdata.mod[view_name].n_obs
+            viewidx = np.empty(n, dtype=map.dtype)
+            viewidx[map[mask] - 1] = np.arange(n, dtype=map.dtype) + np.cumsum(~mask)[mask]
+
+            return viewidx[idx]
         else:
             return idx
 

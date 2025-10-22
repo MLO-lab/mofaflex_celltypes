@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from functools import reduce
-from typing import Any, Literal, TypeVar, Union
+from typing import Any, Literal, TypeVar
 
 import anndata as ad
 import numpy as np
@@ -40,7 +40,7 @@ class AnnDataDictDataset(MofaFlexDataset):
     # The corresponding nonmissing indices for __getitems__ are available as global_to_data[global_to_data >= 0]
     #
     # If we get a global index vector in __getitems__, we do need to reorder the data accordingly. The corresponding
-    # view of the data is obtained as data[data_to_global_map[data_to_global_map[global_idx] >= 0]].
+    # view of the data is obtained as data[data_to_global[data_to_global[global_idx] >= 0]].
     # The corresponding nonmissing indices are given by nonzero(data_to_global_map[global_idx] >= 0)
     #
     # A map from local to global views is given by argsort(global_to_data[global_to_data >= 0])
@@ -52,7 +52,7 @@ class AnnDataDictDataset(MofaFlexDataset):
         use_obs: Literal["union", "intersection"] = "union",
         use_var: Literal["union", "intersection"] = "union",
         preprocessor: Preprocessor | None = None,
-        cast_to: Union[np.ScalarType] | None = np.float32,  # noqa UP007
+        cast_to: np.number | None = np.float32,
         subset_var: str | None = "highly_variable",
         sample_names: Mapping[str, NDArray[str]] | None = None,
         feature_names: Mapping[str, NDArray[str]] | None = None,
