@@ -52,7 +52,7 @@ class CovariatesDataset(Dataset):
     ):
         super().__init__()
 
-        covariates, self.covariates_names = data.get_covariates(obs_key, obsm_key)
+        covariates, self.covariates_names = data.get_covariates(0, obs_key, obsm_key)
 
         # if data is categorical, get unique categories
         categories = set()

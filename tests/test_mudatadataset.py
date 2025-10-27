@@ -33,6 +33,7 @@ def mdata(rng):
             adata.obsm["covar"] = pd.DataFrame(
                 rng.random(size=(len(cobs_names), 3)), columns=["a", "b", "c"], index=adata.obs_names
             )
+            adata.var["covar"] = rng.random(size=adata.n_vars)
             adata.varm["annot"] = pd.DataFrame(
                 rng.random(size=(nvar_per_mod, 10)),
                 columns=[f"annot_view_{view}_{i}" for i in range(10)],
@@ -52,6 +53,10 @@ def mdata(rng):
     global_covar[~mdata.obs_names.isin(adatas["view_2"].obs_names)] = np.nan
     mdata.obs["covar"] = global_covar
 
+    global_covar = rng.random(size=mdata.n_vars)
+    global_covar[~mdata.var_names.isin(adatas["view_2"].var_names)] = np.nan
+    mdata.var["covar"] = global_covar
+
     global_covar = rng.random(size=(mdata.n_obs, 3))
     global_covar[~mdata.obs_names.isin(adatas["view_2"].obs_names)] = np.nan
     mdata.obsm["covar"] = pd.DataFrame(global_covar, columns=["a", "b", "c"], index=mdata.obs_names)
@@ -62,7 +67,7 @@ def mdata(rng):
         global_annot, columns=[f"global_annot_{i}" for i in range(10)], index=mdata.var_names
     )
 
-    mdata.var["global_highly_variable"] = rng.choice((True, False), size=mdata.n_var, p=[0.3, 0.7])
+    mdata.var["global_highly_variable"] = rng.choice((True, False), size=mdata.n_vars, p=[0.3, 0.7])
 
     return mdata
 
@@ -326,11 +331,11 @@ def test_apply_to_group(mdata, dataset, usedask):
 
 
 def test_get_covariates_from_obs(mdata, dataset):
-    covars, covar_names = dataset.get_covariates(obs_key=dict.fromkeys(dataset.group_names, "covar"))
+    covars, covar_names = dataset.get_covariates(axis=0, key="covar")
 
     for group_name, group_covar in covars.items():
         sample_names = pd.Index(dataset.sample_names[group_name])
-        assert covar_names[group_name] == "covar"
+        assert covar_names[group_name] == ["covar"]
         for view_name, view_covar in group_covar.items():
             if view_name != "view_2":
                 view = mdata[mdata.obs["batch"] == group_name][view_name]
@@ -346,8 +351,30 @@ def test_get_covariates_from_obs(mdata, dataset):
                 assert np.all(np.isnan(view_covar[nanidx]))
 
 
+def test_get_covariates_from_var(mdata, dataset):
+    covars, covar_names = dataset.get_covariates(axis=1, key="covar")
+
+    for view_name in mdata.mod.keys():
+        assert covar_names[view_name] == ["covar"]
+        feature_names = pd.Index(dataset.feature_names[view_name])
+        for group_name in dataset.group_names:
+            view_covar = covars[view_name][group_name]
+            if view_name != "view_2":
+                view = mdata.mod[view_name]
+                covar = view.var["covar"]
+                idx = view.var_names.get_indexer(feature_names)
+                assert np.all(covar[idx] == view_covar.squeeze())
+                assert np.all(np.isnan(view_covar[~feature_names.isin(view.var_names)]))
+            else:
+                covar = mdata.var["covar"]
+                nanidx = np.isnan(view_covar)
+                idx = covar.index.get_indexer(feature_names)
+                assert np.all(covar[idx] == view_covar[~nanidx].squeeze())
+                assert np.all(np.isnan(view_covar[nanidx]))
+
+
 def test_get_covariates_from_obsm(mdata, dataset):
-    covars, covar_names = dataset.get_covariates(obsm_key=dict.fromkeys(dataset.group_names, "covar"))
+    covars, covar_names = dataset.get_covariates(axis=0, mkey="covar")
 
     for group_name, group_covar in covars.items():
         assert np.all(covar_names[group_name] == ["a", "b", "c"])
@@ -368,18 +395,31 @@ def test_get_covariates_from_obsm(mdata, dataset):
                 assert np.all(np.isnan(view_covar[nanidx]))
 
 
-def test_get_annotations(mdata, dataset):
-    annot, annot_names = dataset.get_annotations(varm_key=dict.fromkeys(dataset.view_names, "annot"))
+def test_get_covariates_from_varm(mdata, dataset):
+    covars, covar_names = dataset.get_covariates(axis=1, mkey="annot")
 
-    for view_name in dataset.view_names:
+    for view_name in mdata.mod.keys():
         if view_name != "view_2":
-            assert np.all(
-                annot[view_name] == mdata[view_name].varm["annot"].loc[dataset.feature_names[view_name], :].to_numpy().T
-            )
-            assert np.all(annot_names[view_name] == [f"annot_{view_name}_{i}" for i in range(10)])
+            assert np.all(covar_names[view_name] == mdata.mod[view_name].varm["annot"].columns)
         else:
-            assert np.all(annot[view_name] == mdata.varm["annot"].loc[dataset.feature_names[view_name], :].to_numpy().T)
-            assert np.all(annot_names[view_name] == [f"global_annot_{i}" for i in range(10)])
+            assert np.all(covar_names[view_name] == mdata.varm["annot"].columns)
+
+        feature_names = pd.Index(dataset.feature_names[view_name])
+        for group_name in dataset.group_names:
+            view_covar = covars[view_name][group_name]
+            if view_name != "view_2":
+                view = mdata.mod[view_name]
+                covar = view.varm["annot"].to_numpy()
+                idx = view.var_names.get_indexer(feature_names)
+                assert np.all(covar[idx] == view_covar.squeeze())
+                assert np.all(np.isnan(view_covar[~feature_names.isin(view.var_names)]))
+            else:
+                covar = mdata.varm["annot"]
+                idx = covar.index.get_indexer(feature_names)
+                covar = covar.to_numpy()
+                nanidx = np.isnan(view_covar)
+                assert np.all(covar[idx].ravel() == view_covar[~nanidx].squeeze())
+                assert np.all(np.isnan(view_covar[nanidx]))
 
 
 def test_get_missing_obs(mdata, dataset):

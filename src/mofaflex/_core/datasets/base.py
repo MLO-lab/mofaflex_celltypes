@@ -1,7 +1,7 @@
 import inspect
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import FunctionType, MethodType
 from typing import Any, Concatenate, Literal, TypeAlias, TypeVar, Union
 
@@ -306,32 +306,59 @@ class MofaFlexDataset(Dataset, ABC):
         """
         pass
 
-    @abstractmethod
     def get_covariates(
-        self, obs_key: dict[str, str] | None = None, obsm_key: dict[str, str] | None = None
+        self,
+        axis: Literal[0, 1, "samples", "features"],
+        key: str | dict[str, str] | None = None,
+        mkey: str | dict[str, str] | None = None,
+        fill_value: Callable[[np.dtype], Union[*np.ScalarType]] = lambda _: np.nan,
+    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
+        """Get the covariates for each group (if axis in (0, "samples")) or view (if axis in (1, "features")).
+
+        Args:
+            axis: The covariate axis
+            key: Column in `.obs` or `.var` for each group/view containing the covariate.
+            mkey: Key in `.obsm` or `.varm` for each group/view containing the covariates.
+            fill_value: Function returning the alignment fill value (see `align_local_array_to_global`) for a given array dtype.
+
+        Returns:
+            A tuple. The first element contains the covariates for each group/view, the second contains the covariate names for each group/view.
+            If the covariate names could not be determined for a group, the corresponding entry is missing from the dict.
+        """
+        if axis in (0, "samples"):
+            func = self._get_samples_covariates
+            names = self.group_names
+        else:
+            func = self._get_features_covariates
+            names = self.view_names
+
+        if key is None:
+            key = {}
+        elif isinstance(key, str):
+            key = dict.fromkeys(names, key)
+        if mkey is None:
+            mkey = {}
+        elif isinstance(mkey, str):
+            mkey = dict.fromkeys(names, mkey)
+        return func(key, mkey, fill_value)
+
+    @abstractmethod
+    def _get_samples_covariates(
+        self, key: Mapping[str, str], mkey: Mapping[str, str], fill_value: Callable[[np.dtype], Union[*np.ScalarType]]
     ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
         """Get the covariates for each group.
 
-        Args:
-            obs_key: Column in `.obs` for each group containing the covariate.
-            obsm_key: Key in `.obsm` for each group containing the covariates.
-
-        Returns:
-            A tuple. The first element contains the covariates for each group, the second contains the covariate names for each group.
-            If the covariate names could not be determined for a group, the corresponding entry is missing from the dict.
+        This method is called by `get_covariates`.
         """
         pass
 
     @abstractmethod
-    def get_annotations(self, varm_key: dict[str, str]) -> tuple[dict[str, NDArray], dict[str, NDArray]]:
-        """Get the annotations for each view.
+    def _get_features_covariates(
+        self, key: Mapping[str, str], mkey: Mapping[str, str], fill_value: Callable[[np.dtype], Union[*np.ScalarType]]
+    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
+        """Get the covariates for each view.
 
-        Args:
-            varm_key: Key in `.varm` for each view containing the annotations.
-
-        Returns:
-            A tuple. The first element contains the annotations for each view, the second contains the annotation names for each view.
-            If the annotation names could not be determined for a view, the corresponding entry is missing from the dict.
+        This method is called by `get_covariates`.
         """
         pass
 

@@ -52,7 +52,10 @@ def random_adata(rng, random_array):
                 {"covar": rng.random(size=nobs)},
                 index=obs_names if obs_names is not None else [f"cell_{i}" for i in range(nobs)],
             ),
-            var=pd.DataFrame(index=var_names if var_names is not None else [f"gene_{i}" for i in range(nvar)]),
+            var=pd.DataFrame(
+                {"covar": rng.random(size=nvar)},
+                index=var_names if var_names is not None else [f"gene_{i}" for i in range(nvar)],
+            ),
         )
         adata.obsm["covar"] = pd.DataFrame(rng.random(size=(nobs, 3)), columns=["a", "b", "c"], index=adata.obs_names)
         adata.obs["gvar_normal"] = rng.random(size=(nobs))

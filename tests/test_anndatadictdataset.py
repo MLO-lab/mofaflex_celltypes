@@ -93,8 +93,10 @@ def test_properties(anndata_dict, use_obs, use_var, subset_var, dataset):
     }
 
     var_names = {}
+    view_names = set()
     for group in anndata_dict.values():
         for view_name, view in group.items():
+            view_names.add(view_name)
             cvarnames = view.var_names
             if subset_var is not None and subset_var in view.var.columns:
                 cvarnames = cvarnames[view.var[subset_var]]
@@ -104,6 +106,8 @@ def test_properties(anndata_dict, use_obs, use_var, subset_var, dataset):
             else:
                 var_names[view_name] = var_func(var_names[view_name], cvarnames)
 
+    assert sorted(anndata_dict.keys()) == sorted(dataset.group_names)
+    assert sorted(view_names) == sorted(dataset.view_names)
     for group_name, group_obs in obs_names.items():
         assert dataset.n_samples[group_name] == group_obs.size
         assert np.all(np.sort(dataset.sample_names[group_name]) == group_obs.sort_values().to_numpy())
@@ -332,7 +336,7 @@ def test_apply_to_group(anndata_dict, dataset, usedask):
 
 
 def test_get_covariates_from_obs(anndata_dict, dataset):
-    covars, covar_names = dataset.get_covariates(obs_key=dict.fromkeys(dataset.group_names, "covar"))
+    covars, covar_names = dataset.get_covariates(axis=0, key="covar")
 
     for group_name, group in anndata_dict.items():
         assert covar_names[group_name] == "covar"
@@ -346,12 +350,28 @@ def test_get_covariates_from_obs(anndata_dict, dataset):
             assert np.all(np.isnan(covars[group_name][view_name][~globalidx]))
 
 
-def test_get_covariates_from_obsm(anndata_dict, dataset):
-    covars, covar_names = dataset.get_covariates(obsm_key=dict.fromkeys(dataset.group_names, "covar"))
+def test_get_covariates_from_var(anndata_dict, dataset):
+    covars, covar_names = dataset.get_covariates(axis=1, key="covar")
 
     for group_name, group in anndata_dict.items():
-        assert np.all(covar_names[group_name] == ["a", "b", "c"])
         for view_name, view in group.items():
+            assert covar_names[view_name] == "covar"
+
+            feature_names = dataset.feature_names[view_name]
+            globalidx = np.isin(feature_names, view.var_names)
+            localidx = view.var_names.get_indexer(feature_names)
+            localidx = localidx[localidx >= 0]
+
+            assert np.all(covars[view_name][group_name][globalidx].squeeze() == view.var["covar"].to_numpy()[localidx])
+            assert np.all(np.isnan(covars[view_name][group_name][~globalidx]))
+
+
+def test_get_covariates_from_obsm(anndata_dict, dataset):
+    covars, covar_names = dataset.get_covariates(axis=0, mkey="covar")
+
+    for group_name, group in anndata_dict.items():
+        for view_name, view in group.items():
+            assert np.all(covar_names[group_name] == anndata_dict[group_name][view_name].obsm["covar"].columns)
             sample_names = dataset.sample_names[group_name]
             globalidx = np.isin(sample_names, view.obs_names)
             localidx = view.obs_names.get_indexer(sample_names)
@@ -361,19 +381,19 @@ def test_get_covariates_from_obsm(anndata_dict, dataset):
             assert np.all(np.isnan(covars[group_name][view_name][~globalidx, :]))
 
 
-def test_get_annotations(anndata_dict, dataset):
-    annot, annot_names = dataset.get_annotations(varm_key=dict.fromkeys(dataset.view_names, "annot"))
+def test_get_covariates_from_varm(anndata_dict, dataset):
+    covars, covar_names = dataset.get_covariates(axis=1, mkey="annot")
 
-    for view_name in dataset.view_names:
-        assert np.all(annot_names[view_name] == [f"annot_{i}" for i in range(10)])
-        feature_names = dataset.feature_names[view_name]
-        for group in anndata_dict.values():
-            view = group[view_name]
+    for group_name, group in anndata_dict.items():
+        for view_name, view in group.items():
+            assert np.all(covar_names[view_name] == anndata_dict[group_name][view_name].varm["annot"].columns)
+            feature_names = dataset.feature_names[view_name]
             globalidx = np.isin(feature_names, view.var_names)
             localidx = view.var_names.get_indexer(feature_names)
             localidx = localidx[localidx >= 0]
 
-            assert np.all(annot[view_name][:, globalidx] == view.varm["annot"].to_numpy()[localidx, :].T)
+            assert np.all(covars[view_name][group_name][globalidx, :] == view.varm["annot"].to_numpy()[localidx, :])
+            assert np.all(np.isnan(covars[view_name][group_name][~globalidx, :]))
 
 
 def test_get_missing_obs(anndata_dict, dataset):
