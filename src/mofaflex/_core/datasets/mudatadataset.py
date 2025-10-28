@@ -383,8 +383,9 @@ class MuDataDataset(MofaFlexDataset):
 
         covar_dims = defaultdict(set)
         for group_name, group_idx in self._groups.items():
-            subdata = self._data[group_idx, :]
-            for modname, mod in subdata.mod.items():
+            for modname in self.view_names:
+                subdata = self._data[group_idx, self.feature_names[modname]]
+                mod = subdata.mod[modname]
                 dict_key = (group_name, modname)[dict_reorder]
 
                 ckey = key.get(dict_key[0], None)
