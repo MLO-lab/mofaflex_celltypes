@@ -363,13 +363,13 @@ def test_get_covariates_from_var(mdata, dataset):
                 view = mdata.mod[view_name]
                 covar = view.var["covar"]
                 idx = view.var_names.get_indexer(feature_names)
-                assert np.all(covar[idx] == view_covar.squeeze())
+                assert np.all(covar.iloc[idx] == view_covar.squeeze())
                 assert np.all(np.isnan(view_covar[~feature_names.isin(view.var_names)]))
             else:
                 covar = mdata.var["covar"]
                 nanidx = np.isnan(view_covar)
                 idx = covar.index.get_indexer(feature_names)
-                assert np.all(covar[idx] == view_covar[~nanidx].squeeze())
+                assert np.all(covar.iloc[idx] == view_covar[~nanidx].squeeze())
                 assert np.all(np.isnan(view_covar[nanidx]))
 
 

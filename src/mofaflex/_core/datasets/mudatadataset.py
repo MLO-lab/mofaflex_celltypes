@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeVar, Union
 
@@ -248,15 +249,19 @@ class MuDataDataset(MofaFlexDataset):
             "nonmissing_features": nonmissing_var,
         }
 
-    def _align_array_to_samples(
+    def _align_local_array_to_global(
         self,
         arr: NDArray[T],
         view_name: str,
         subdata: MuData | None = None,
         group_name: str | None = None,
+        align_to: Literal["samples", "features"] = "samples",
         axis: int = 0,
         fill_value: np.ScalarType = np.nan,
     ) -> NDArray[T]:
+        if align_to == "features":
+            return arr
+
         if subdata is None:
             if group_name is None:
                 raise ValueError("Need either subdata or group_name, but both are None.")
@@ -282,10 +287,9 @@ class MuDataDataset(MofaFlexDataset):
         axis: int = 0,
         fill_value: np.ScalarType = np.nan,
     ):
-        if align_to == "samples":
-            return self._align_array_to_samples(arr, view_name, group_name=group_name, axis=axis, fill_value=fill_value)
-        else:
-            return arr
+        return self._align_local_array_to_global(
+            arr, view_name, group_name=group_name, align_to=align_to, axis=axis, fill_value=fill_value
+        )
 
     def align_global_array_to_local(
         self, arr: NDArray[T], group_name: str, view_name: str, align_to: Literal["samples", "features"], axis: int = 0
@@ -355,7 +359,7 @@ class MuDataDataset(MofaFlexDataset):
                     modmissing = ~(np.asarray(modmissing.sum(axis=1)).squeeze() == 0)
                 else:
                     modmissing = np.isnan(mod.X).all(axis=1)
-                modmissing = self._align_array_to_samples(modmissing, modname, subdata, fill_value=True)
+                modmissing = self._align_local_array_to_global(modmissing, modname, subdata, fill_value=True)
                 dfs.append(
                     pd.DataFrame(
                         {"view": modname, "group": group_name, "obs_name": subdata.obs_names, "missing": modmissing}
@@ -363,137 +367,92 @@ class MuDataDataset(MofaFlexDataset):
                 )
         return pd.concat(dfs, axis=0, ignore_index=True)
 
-    def _process_m_covariate(
+    def _get_covariates(
         self,
-        mdata,
-        mkey,
-        group_name,
-        modname,
-        align_to: Literal["samples", "features"],
+        axis: int,
+        attr: str,
+        align_to: str,
+        key: Mapping[str, str],
+        mkey: Mapping[str, str],
         fill_value: Callable[[np.dtype], Union[*np.ScalarType]],
-    ) -> tuple[NDArray, NDArray, int]:
-        mattr = "obsm" if align_to == "samples" else "varm"
-        covar = covar_dim = covar_name = None
-        needs_alignment = False
-        mod = mdata.mod[modname]
-        if mkey in getattr(mod, mattr):
-            covar = getattr(mod, mattr)[mkey]
-            needs_alignment = True
-        elif mkey in getattr(mdata, mattr):
-            covar = getattr(mdata, mattr)[mkey]
-        if covar is not None:
-            if isinstance(covar, pd.DataFrame):
-                covar_name = covar.columns.to_numpy()
-                covar = covar.to_numpy()
-            elif isinstance(covar, pd.Series):
-                covar_name = np.asarray(covar.name, dtype=object)
-                covar = covar.to_numpy()
-            elif sparse.issparse(covar):
-                covar = covar.toarray()
-            if covar.ndim == 1:
-                covar = covar[..., None]
-            covar_dim = covar.shape[1]
+    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
+        covariates, covariates_names = defaultdict(dict), {}
+        attrm = f"{attr}m"
+        dict_reorder = slice(None) if axis == 0 else slice(None, None, -1)
+        msg = ("group", "view")[dict_reorder]
 
-            if needs_alignment:
-                if align_to == "samples":
-                    covar = self._align_array_to_samples(covar, modname, mdata, fill_value=fill_value(covar.dtype))
-                else:
-                    covar = self.align_local_array_to_global(
-                        covar, group_name, modname, align_to=align_to, fill_value=fill_value(covar.dtype)
-                    )
+        covar_dims = defaultdict(set)
+        for group_name, group_idx in self._groups.items():
+            subdata = self._data[group_idx, :]
+            for modname, mod in subdata.mod.items():
+                dict_key = (group_name, modname)[dict_reorder]
 
-        return covar, covar_dim, covar_name
+                ckey = key.get(dict_key[0], None)
+                cmkey = mkey.get(dict_key[0], None)
+
+                if ckey is None and cmkey is None:
+                    continue
+                if ckey and cmkey:
+                    raise ValueError(f"Provide either key or mkey for {msg[0]} {dict_key[0]}, not both.")
+
+                if ckey is not None:
+                    ccov = None
+                    if ckey in getattr(mod, attr).columns:
+                        arr = getattr(mod, attr)[ckey].to_numpy()
+                        ccov = self._align_local_array_to_global(
+                            arr, modname, subdata, align_to=align_to, fill_value=fill_value(arr.dtype)
+                        )[:, None]
+                    elif ckey in getattr(subdata, attr).columns:
+                        ccov = getattr(subdata, attr)[ckey].to_numpy()[:, None]
+                    if ccov is not None:
+                        covariates[dict_key[0]][dict_key[1]] = ccov
+                        covariates_names[dict_key[0]] = np.asarray([ckey], dtype=object)
+                elif cmkey is not None:
+                    needs_alignment = False
+                    name = None
+                    if cmkey in getattr(mod, attrm):
+                        ccov = getattr(mod, attrm)[cmkey]
+                        needs_alignment = True
+                    elif cmkey in getattr(subdata, attrm):
+                        ccov = getattr(subdata, attrm)[cmkey]
+                    if ccov is not None:
+                        if isinstance(ccov, pd.DataFrame):
+                            name = ccov.columns.to_numpy()
+                            ccov = ccov.to_numpy()
+                        elif isinstance(ccov, pd.Series):
+                            ccov = np.asarray([ccov.name], dtype=object)
+                            ccov = ccov.to_numpy()
+                        elif sparse.issparse(ccov):
+                            ccov = ccov.toarray()
+                        if ccov.ndim == 1:
+                            ccov = ccov[..., None]
+                        covar_dims[dict_key[0]].add(ccov.shape[1])
+
+                        if needs_alignment:
+                            ccov = self._align_local_array_to_global(
+                                ccov, modname, subdata, align_to=align_to, fill_value=fill_value(ccov.dtype)
+                            )
+                        covariates[dict_key[0]][dict_key[1]] = ccov
+                        if name is not None:
+                            covariates_names[dict_key[0]] = name
+
+        for name, covar_dim in covar_dims.items():
+            if len(covar_dim) > 1:
+                raise ValueError(
+                    f"Number of covariate dimensions in {msg[0]} {name} must be the same across {msg[1]}s."
+                )
+        covariates.default_factory = None
+        return covariates, covariates_names
 
     def _get_samples_covariates(
         self, key: Mapping[str, str], mkey: Mapping[str, str], fill_value: Callable[[np.dtype], Union[*np.ScalarType]]
     ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
-        covariates, covariates_names = {}, {}
-        for group_name, group_idx in self._groups.items():
-            obskey = key.get(group_name, None)
-            obsmkey = mkey.get(group_name, None)
-            if obskey is None and obsmkey is None:
-                continue
-            if obskey and obsmkey:
-                raise ValueError(f"Provide either key or mkey for group {group_name}, not both.")
-
-            ccovs = {}
-            subdata = self._data[group_idx, :]
-            if obskey is not None:
-                for modname, mod in subdata.mod.items():
-                    ccov = None
-                    if obskey in mod.obs.columns:
-                        arr = mod.obs[obskey].to_numpy()
-                        ccov = self._align_array_to_samples(arr, modname, subdata, fill_value=fill_value(arr.dtype))[
-                            :, None
-                        ]
-                    elif obskey in subdata.obs.columns:
-                        ccov = subdata.obs[obskey].to_numpy()
-                    if ccov is not None:
-                        ccovs[modname] = ccov
-
-                if len(ccovs):
-                    covariates_names[group_name] = np.asarray([obskey], dtype=object)
-                else:
-                    _logger.warn(f"No covariate data found in obs attribute for group {group_name}.")
-            elif obsmkey is not None:
-                covar_dims = set()
-                for modname in subdata.mod.keys():
-                    covar, covar_dim, covar_name = self._process_m_covariate(
-                        subdata, obsmkey, group_name, modname, align_to="samples", fill_value=fill_value
-                    )
-                    if covar is not None:
-                        ccovs[modname] = covar
-                        covar_dims.add(covar_dim)
-                    if covar_name is not None:
-                        covariates_names[group_name] = covar_name
-                if len(covar_dims) > 1:
-                    raise ValueError(
-                        f"Number of covariate dimensions in group {group_name} must be the same across views."
-                    )
-
-            covariates[group_name] = ccovs
-        return covariates, covariates_names
+        return self._get_covariates(0, "obs", "samples", key, mkey, fill_value)
 
     def _get_features_covariates(
         self, key: Mapping[str, str], mkey: Mapping[str, str], fill_value: Callable[[np.dtype], Union[*np.ScalarType]]
     ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
-        covariates, covariates_names, covar_dims = {}, {}, {}
-        for group_name, group_idx in self._groups.items():
-            subdata = self._data[group_idx, :]
-            for modname, mod in subdata.mod.items():
-                varkey = key.get(modname, None)
-                varmkey = mkey.get(modname, None)
-                if varkey is None and varmkey is None:
-                    continue
-                if varkey and varmkey:
-                    raise ValueError(f"Provide either key or mkey for view {modname}, not both.")
-
-                if varkey is not None:
-                    ccov = None
-                    if varkey in mod.var.columns:
-                        arr = mod.var[varkey].to_numpy()
-                        ccov = self.align_local_array_to_global(
-                            arr, group_name, modname, align_to="features", fill_value=fill_value(arr.dtype)
-                        )
-                    elif varkey in subdata.var.columns:
-                        ccov = subdata.var[varkey].to_numpy()
-                    if ccov is not None:
-                        covariates.setdefault(modname, {})[group_name] = ccov
-                        covariates_names[modname] = np.asarray([varkey], dtype=object)
-                elif varmkey is not None:
-                    for modname in subdata.mod.keys():
-                        covar, covar_dim, covar_name = self._process_m_covariate(
-                            subdata, varmkey, group_name, modname, align_to="features", fill_value=fill_value
-                        )
-                        if covar is not None:
-                            covariates.setdefault(modname, {})[group_name] = covar
-                            covar_dims.setdefault(modname, set()).add(covar_dim)
-                        if covar_name is not None:
-                            covariates_names[modname] = covar_name
-        for modname, dims in covar_dims.items():
-            if len(dims) > 1:
-                raise ValueError(f"Number of covariate dimensions in view {modname} must be the same across groups.")
-        return covariates, covariates_names
+        return self._get_covariates(1, "var", "features", key, mkey, fill_value)
 
     def _data_for_apply(self):
         data = self._data
