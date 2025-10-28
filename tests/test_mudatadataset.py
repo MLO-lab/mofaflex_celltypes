@@ -30,15 +30,19 @@ def mdata(rng):
         )
         if view < 2:
             adata.obs["covar"] = rng.random(size=len(cobs_names))
-            adata.obsm["covar"] = pd.DataFrame(
+            adata.obsm["covar_df"] = pd.DataFrame(
                 rng.random(size=(len(cobs_names), 3)), columns=["a", "b", "c"], index=adata.obs_names
             )
+            adata.obsm["covar_array"] = rng.random(size=(len(cobs_names), 3))
+            adata.obsm["covar_sparse"] = sparse.csr_array(rng.poisson(size=(len(cobs_names), 3)))
             adata.var["covar"] = rng.random(size=adata.n_vars)
-            adata.varm["annot"] = pd.DataFrame(
+            adata.varm["annot_df"] = pd.DataFrame(
                 rng.random(size=(nvar_per_mod, 10)),
                 columns=[f"annot_view_{view}_{i}" for i in range(10)],
                 index=adata.var_names,
             )
+            adata.varm["annot_array"] = rng.random(size=(nvar_per_mod, 10))
+            adata.varm["annot_sparse"] = sparse.csr_array(rng.poisson(size=(nvar_per_mod, 4)))
         adatas[f"view_{view}"] = adata
 
     adatas["view_0"].X = sparse.csr_array(adatas["view_0"].X)
@@ -59,13 +63,23 @@ def mdata(rng):
 
     global_covar = rng.random(size=(mdata.n_obs, 3))
     global_covar[~mdata.obs_names.isin(adatas["view_2"].obs_names)] = np.nan
-    mdata.obsm["covar"] = pd.DataFrame(global_covar, columns=["a", "b", "c"], index=mdata.obs_names)
+    mdata.obsm["covar_df"] = pd.DataFrame(global_covar, columns=["a", "b", "c"], index=mdata.obs_names)
+    mdata.obsm["covar_array"] = rng.permuted(global_covar, axis=0)
+
+    global_covar_sparse = sparse.csr_array(rng.poisson(size=(mdata.n_obs, 3)).astype(np.float32))
+    global_covar_sparse[~mdata.obs_names.isin(adatas["view_2"].obs_names)] = np.nan
+    mdata.obsm["covar_sparse"] = global_covar_sparse
 
     global_annot = rng.random(size=(mdata.n_vars, 10))
     global_annot[~mdata.var_names.isin(adatas["view_2"].var_names)] = np.nan
-    mdata.varm["annot"] = pd.DataFrame(
+    mdata.varm["annot_df"] = pd.DataFrame(
         global_annot, columns=[f"global_annot_{i}" for i in range(10)], index=mdata.var_names
     )
+    mdata.varm["annot_array"] = rng.permuted(global_annot, axis=0)
+
+    global_annot_sparse = sparse.csr_array(rng.poisson(size=(mdata.n_var, 4)).astype(np.float32))
+    global_annot_sparse[~mdata.var_names.isin(adatas["view_2"].var_names)] = np.nan
+    mdata.varm["annot_sparse"] = global_annot_sparse
 
     mdata.var["global_highly_variable"] = rng.choice((True, False), size=mdata.n_vars, p=[0.3, 0.7])
 
@@ -366,8 +380,10 @@ def test_get_covariates_from_key(mdata, dataset, subset_var, axis):
                 assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][nanidx]))
 
 
+@pytest.mark.parametrize("type", ("df", "array", "sparse"))
 @pytest.mark.parametrize("axis, mkey", [(0, "covar"), (1, "annot")])
-def test_get_covariates_from_keym(mdata, dataset, subset_var, axis, mkey):
+def test_get_covariates_from_keym(mdata, dataset, subset_var, axis, mkey, type):
+    mkey = f"{mkey}_{type}"
     attr = "obs" if axis == 0 else "var"
     attrm = f"{attr}m"
     namesattr = f"{attr}_names"
@@ -377,25 +393,35 @@ def test_get_covariates_from_keym(mdata, dataset, subset_var, axis, mkey):
     covars, covar_names = dataset.get_covariates(axis=axis, mkey=mkey)
 
     for group_name in dataset.group_names:
-        subdata = mdata[mdata.obs["batch"] == group_name]
-        for modname in subdata.mod.keys():
+        for modname in mdata.mod.keys():
             dict_key = (group_name, modname)[dict_reorder]
             names = getattr(dataset, dsetnamesattr)[dict_key[0]]
+            subdata = mdata[dataset.sample_names[group_name], dataset.feature_names[modname]]
             if modname != "view_2":
-                view = subdata.mod[modname][:, get_varnames(subdata, modname, subset_var)]
-                assert np.all(covar_names[dict_key[0]] == getattr(view, attrm)[mkey].columns)
+                view = subdata.mod[modname]
+                covar = getattr(view, attrm)[mkey]
+                if type == "df":
+                    assert np.all(covar_names[dict_key[0]] == getattr(view, attrm)[mkey].columns)
+                    covar = covar.to_numpy()
 
-                covar = getattr(view, attrm)[mkey].to_numpy()
                 globalidx = np.isin(names, getattr(view, namesattr))
                 localidx = getattr(view, namesattr).get_indexer(names)
                 localidx = localidx[localidx >= 0]
-                assert np.all(
-                    covars[dict_key[0]][dict_key[1]][globalidx, :] == getattr(view, attrm)[mkey].to_numpy()[localidx, :]
-                )
+
+                gt = getattr(view, attrm)[mkey]
+                if type == "df":
+                    gt = gt.iloc[localidx, :].to_numpy()
+                else:
+                    gt = gt[localidx, :]
+                assert np.all(covars[dict_key[0]][dict_key[1]][globalidx, :] == gt)
                 assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][~globalidx, :]))
             else:
-                assert np.all(covar_names[dict_key[0]] == getattr(subdata, attrm)[mkey].columns)
-                covar = getattr(subdata, attrm)[mkey].loc[names, :].to_numpy()
+                covar = getattr(subdata, attrm)[mkey]
+                if type == "df":
+                    assert np.all(covar_names[dict_key[0]] == getattr(subdata, attrm)[mkey].columns)
+                    covar = covar.to_numpy()
+                elif type == "sparse":
+                    covar = covar.toarray()
                 nanidx = np.isnan(covar)
                 assert np.all(covar[~nanidx] == covars[dict_key[0]][dict_key[1]][~nanidx])
                 assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][nanidx]))

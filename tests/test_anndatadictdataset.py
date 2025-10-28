@@ -361,8 +361,10 @@ def test_get_covariates_from_key(anndata_dict, dataset, axis):
             assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][~globalidx]))
 
 
+@pytest.mark.parametrize("type", ("df", "array", "sparse"))
 @pytest.mark.parametrize("axis, mkey", [(0, "covar"), (1, "annot")])
-def test_get_covariates_from_keym(anndata_dict, dataset, axis, mkey):
+def test_get_covariates_from_keym(anndata_dict, dataset, axis, mkey, type):
+    mkey = f"{mkey}_{type}"
     attr = "obs" if axis == 0 else "var"
     attrm = f"{attr}m"
     namesattr = f"{attr}_names"
@@ -374,16 +376,20 @@ def test_get_covariates_from_keym(anndata_dict, dataset, axis, mkey):
     for group_name, group in anndata_dict.items():
         for view_name, view in group.items():
             dict_key = (group_name, view_name)[dict_reorder]
-            assert np.all(covar_names[dict_key[0]] == getattr(view, attrm)[mkey].columns)
+            if type == "df":
+                assert np.all(covar_names[dict_key[0]] == getattr(view, attrm)[mkey].columns)
 
             names = getattr(dataset, dsetnamesattr)[dict_key[0]]
             globalidx = np.isin(names, getattr(view, namesattr))
             localidx = getattr(view, namesattr).get_indexer(names)
             localidx = localidx[localidx >= 0]
 
-            assert np.all(
-                covars[dict_key[0]][dict_key[1]][globalidx, :] == getattr(view, attrm)[mkey].to_numpy()[localidx, :]
-            )
+            gt = getattr(view, attrm)[mkey]
+            if type == "df":
+                gt = gt.iloc[localidx, :].to_numpy()
+            else:
+                gt = gt[localidx, :]
+            assert np.all(covars[dict_key[0]][dict_key[1]][globalidx, :] == gt)
             assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][~globalidx, :]))
 
 

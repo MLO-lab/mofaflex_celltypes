@@ -89,7 +89,7 @@ def anndata_dict(random_adata, rng):
 )
 def test_integration(anndata_dict, tmp_path, attrname, attrvalue, n_particles, batch_size, usedask):
     opts = (
-        DataOptions(plot_data_overview=False, annotations_varm_key="annot"),
+        DataOptions(plot_data_overview=False, annotations_varm_key="annot_df"),
         ModelOptions(
             n_factors=5,
             guiding_vars_likelihoods={
