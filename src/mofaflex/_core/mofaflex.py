@@ -763,7 +763,7 @@ class MOFAFLEX:
 
             if q.shape[0] > 1:  # min and max are not defined for dimensions of size 1
                 q = 2.0 * (q - np.min(q, axis=0)) / (np.max(q, axis=0) - np.min(q, axis=0)) - 1
-            else:
+            elif n > 0:
                 q = 2.0 * (q - np.min(q)) / (np.max(q) - np.min(q)) - 1
 
             # Add artifical dimension at dimension -2 for broadcasting
