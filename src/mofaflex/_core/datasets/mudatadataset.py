@@ -370,17 +370,22 @@ class MuDataDataset(MofaFlexDataset):
     def _get_covariates(
         self,
         axis: int,
-        attr: str,
-        align_to: str,
         key: Mapping[str, str],
         mkey: Mapping[str, str],
         fill_value: Callable[[np.dtype], Union[*np.ScalarType]],
     ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
-        covariates, covariates_names = defaultdict(dict), {}
+        if axis == 0:
+            attr = "obs"
+            align_to = "samples"
+            dict_reorder = slice(None)
+        else:
+            attr = "var"
+            align_to = "features"
+            dict_reorder = slice(None, None, -1)
         attrm = f"{attr}m"
-        dict_reorder = slice(None) if axis == 0 else slice(None, None, -1)
         msg = ("group", "view")[dict_reorder]
 
+        covariates, covariates_names = defaultdict(dict), {}
         covar_dims = defaultdict(set)
         for group_name, group_idx in self._groups.items():
             for modname in self.view_names:
@@ -444,16 +449,6 @@ class MuDataDataset(MofaFlexDataset):
                 )
         covariates.default_factory = None
         return covariates, covariates_names
-
-    def _get_samples_covariates(
-        self, key: Mapping[str, str], mkey: Mapping[str, str], fill_value: Callable[[np.dtype], Union[*np.ScalarType]]
-    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
-        return self._get_covariates(0, "obs", "samples", key, mkey, fill_value)
-
-    def _get_features_covariates(
-        self, key: Mapping[str, str], mkey: Mapping[str, str], fill_value: Callable[[np.dtype], Union[*np.ScalarType]]
-    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
-        return self._get_covariates(1, "var", "features", key, mkey, fill_value)
 
     def _data_for_apply(self):
         data = self._data

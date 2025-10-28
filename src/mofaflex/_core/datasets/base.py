@@ -326,11 +326,11 @@ class MofaFlexDataset(Dataset, ABC):
             If the covariate names could not be determined for a group, the corresponding entry is missing from the dict.
         """
         if axis in (0, "samples"):
-            func = self._get_samples_covariates
             names = self.group_names
+            axis = 0
         else:
-            func = self._get_features_covariates
             names = self.view_names
+            axis = 1
 
         if key is None:
             key = {}
@@ -340,23 +340,17 @@ class MofaFlexDataset(Dataset, ABC):
             mkey = {}
         elif isinstance(mkey, str):
             mkey = dict.fromkeys(names, mkey)
-        return func(key, mkey, fill_value)
+        return self._get_covariates(axis, key, mkey, fill_value)
 
     @abstractmethod
-    def _get_samples_covariates(
-        self, key: Mapping[str, str], mkey: Mapping[str, str], fill_value: Callable[[np.dtype], Union[*np.ScalarType]]
+    def _get_covariates(
+        self,
+        axis: int,
+        key: Mapping[str, str],
+        mkey: Mapping[str, str],
+        fill_value: Callable[[np.dtype], Union[*np.ScalarType]],
     ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
-        """Get the covariates for each group.
-
-        This method is called by `get_covariates`.
-        """
-        pass
-
-    @abstractmethod
-    def _get_features_covariates(
-        self, key: Mapping[str, str], mkey: Mapping[str, str], fill_value: Callable[[np.dtype], Union[*np.ScalarType]]
-    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
-        """Get the covariates for each view.
+        """Get the covariates for each group/view.
 
         This method is called by `get_covariates`.
         """
