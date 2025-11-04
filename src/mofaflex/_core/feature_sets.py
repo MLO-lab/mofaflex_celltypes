@@ -1,9 +1,11 @@
 # Highly inspired by https://github.com/krassowski/gsea-api
 from __future__ import annotations
 
+import io
 import logging
 from collections import Counter
 from collections.abc import Collection, Iterable
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -457,13 +459,17 @@ class FeatureSets:
                 break
         return feature_sets
 
-    def to_gmt(self, path: str | Path):
+    def to_gmt(self, path: str | Path | io.TextIOBase):
         """Write this feature set collection to a GMT file.
 
         Args:
             path: Path to the output file.
         """
-        with open(path, "w") as f:
+        if isinstance(path, io.TextIOBase):
+            ctx = nullcontext(path)
+        else:
+            ctx = open(path, "w")
+        with ctx as f:
             for feature_set in self.feature_sets:
                 f.write(
                     feature_set.name + "\t" + feature_set.description + "\t" + "\t".join(feature_set.features) + "\n"
@@ -478,7 +484,9 @@ class FeatureSets:
         return {fs.name: fs.features for fs in self.feature_sets}
 
     @classmethod
-    def from_gmt(cls, path: str | Path, name: str | None = None, remove_empty: bool = True) -> FeatureSets:
+    def from_gmt(
+        cls, path: str | Path | io.TextIOBase, name: str | None = None, remove_empty: bool = True
+    ) -> FeatureSets:
         """Create a FeatureSets object from a GMT file.
 
         Args:
@@ -487,7 +495,11 @@ class FeatureSets:
             remove_empty: Whether to remove empty feature sets.
         """
         feature_sets = set()
-        with open(path) as f:
+        if isinstance(path, io.TextIOBase):
+            ctx = nullcontext(path)
+        else:
+            ctx = open(path)
+        with ctx as f:
             for line in f:
                 fs_name, description, *features = line.strip().split("\t")
                 feature_sets.add(FeatureSet(features, name=fs_name, description=description))
