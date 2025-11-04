@@ -7,7 +7,7 @@
 :maxdepth: 1
 
 notebooks/getting_started.ipynb
-notebooks/mofaflex_for_mofa_users_cll.ipynb
+tutorials.md
 modeldescription.md
 api/index
 changelog.md
