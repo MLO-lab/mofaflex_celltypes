@@ -19,6 +19,8 @@ MOFA-FLEX is a versatile factor analysis framework designed to streamline the co
 
 Please refer to the [documentation][]. In particular, the
 
+- [Getting started guide][getting started].
+- [Tutorials][].
 - [API documentation][].
 
 ## Installation
@@ -51,7 +53,23 @@ If you found a bug, please use the [issue tracker][].
 
 ## Citation
 
-> t.b.a
+If you use MOFA-FLEX in your work, please cite
+> Qoku A, Rohbeck M, Walter FC, Kats I, Stegle O, and Buettner F.  MOFA-FLEX: A Factor Model Framework for Integrating Omics Data with Prior Knowledge. Preprint at [bioRxiv](https://www.biorxiv.org/content/10.1101/2025.11.03.686250) (2025). DOI: [10.1101/2025.11.03.686250](https://doi.org/10.1101/2025.11.03.686250).
+
+<details><summary>BibTeX</summary>
+
+```bibtex
+@article {mofaflex,
+	author = {Qoku, Arber and Rohbeck, Martin and Walter, Florin Cornelius and Kats, Ilia and Stegle, Oliver and Buettner, Florian},
+	title = {MOFA-FLEX: A Factor Model Framework for Integrating Omics Data with Prior Knowledge},
+	eprint = {2025.11.03.686250},
+	year = {2025},
+	doi = {10.1101/2025.11.03.686250},
+	URL = {https://www.biorxiv.org/content/early/2025/11/04/2025.11.03.686250},
+	archiveprefix = {bioRxiv}
+}
+```
+</details>
 
 [issue tracker]: https://github.com/bioFAM/mofaflex/issues
 [tests]: https://github.com/bioFAM/mofaflex/actions/workflows/test.yaml
@@ -59,5 +77,7 @@ If you found a bug, please use the [issue tracker][].
 [documentation]: https://mofaflex.readthedocs.io
 [discussions]: https://github.com/bioFAM/mofaflex/discussions
 [changelog]: https://mofaflex.readthedocs.io/latest/changelog.html
+[getting started]: https://mofaflex.readthedocs.io/latest/notebooks/getting_started.html
+[tutorials]: https://mofaflex.readthedocs.io/latest/tutorials.html
 [api documentation]: https://mofaflex.readthedocs.io/latest/api/index.html
 [pypi]: https://pypi.org/project/mofaflex
