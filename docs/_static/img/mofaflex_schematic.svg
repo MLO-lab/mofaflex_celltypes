@@ -8,7 +8,7 @@
    style="clip-rule:evenodd;fill-rule:evenodd;stroke-linecap:round;stroke-miterlimit:1.5"
    id="svg183"
    sodipodi:docname="mofaflex_schematic.svg"
-   inkscape:version="1.4 (e7c3feb100, 2024-10-09)"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
@@ -22,8 +22,8 @@
    inkscape:pageopacity="0"
    inkscape:pagecheckerboard="0"
    inkscape:deskcolor="#d1d1d1"
-   inkscape:current-layer="svg183" /><rect
-   style="fill:#ffffff;stroke:#000000;stroke-width:2;stroke-linecap:square;stroke-miterlimit:2;stroke-dashoffset:4.2"
+   inkscape:current-layer="g20" /><rect
+   style="fill:#ffffff;stroke:none;stroke-width:2;stroke-linecap:square;stroke-miterlimit:2;stroke-dashoffset:4.2"
    id="rect1"
    width="1823.5167"
    height="1070.2782"
@@ -108,7 +108,7 @@
    id="g167">
             </g><text
    x="302.91473"
-   y="865.51355"
+   y="879.51355"
    id="text169"
    style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:33.333px;font-family:sans-serif;-inkscape-font-specification:'Sans, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">Observation covariates</text><g
    transform="matrix(33.3333,0,0,33.3333,265.15312,1190.5975)"
@@ -1322,16 +1322,16 @@
    style="opacity:1;fill:none;stroke:#000000;stroke-width:4;stroke-linecap:square;stroke-miterlimit:2;stroke-dasharray:none;stroke-dashoffset:4.2;stroke-opacity:1"
    id="rect45"
    width="703.20544"
-   height="262.62476"
+   height="248.52879"
    x="2"
-   y="677.79132"
-   ry="25.134104" /><path
+   y="691.88727"
+   ry="23.78507" /><path
    style="fill:none;stroke:#c6e6d9;stroke-width:8;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1"
-   d="m 907.44672,467.94193 v 54.21695 H 1094.0525 V 738.01641 H 592.05252"
+   d="m 907.44672,467.94193 v 54.21695 H 1094.0525 V 752.01641 H 592.05252"
    id="path48"
    sodipodi:nodetypes="ccccc" /><path
    style="fill:none;stroke:#ff5959;stroke-width:8;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1"
-   d="m 877.04825,467.66007 v 83.19983 h 62.72927 v 247.67717 h -360"
+   d="m 877.04825,467.66007 v 83.19983 h 62.72927 v 259.67717 h -360"
    id="path49"
    sodipodi:nodetypes="ccccc" /><g
    id="g1076"
@@ -2443,7 +2443,7 @@
        id="path16"
        style="fill:#000000;fill-opacity:1;stroke-width:1.42339" /></g></g><g
    id="g44"
-   transform="translate(398.84063,-226.76352)"
+   transform="translate(398.84063,-219.26199)"
    style="stroke-width:2;stroke-dasharray:none"><rect
      style="opacity:1;fill:#f8eae5;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-linecap:square;stroke-miterlimit:2;stroke-dasharray:none;stroke-dashoffset:4.2;stroke-opacity:1"
      id="rect44"
@@ -2706,7 +2706,7 @@
        id="tspan202"
        x="1771.3856"
        y="496.57175"
-       style="font-size:20px">Prior</tspan><tspan
+       style="font-size:20px">Domain</tspan><tspan
        sodipodi:role="line"
        x="1771.3856"
        y="516.57178"
@@ -3030,7 +3030,7 @@
       </g></g>
 </g></g><g
    id="g43"
-   transform="translate(231.56792,-106.79409)"><rect
+   transform="translate(231.56792,-92.79409)"><rect
      style="clip-rule:evenodd;fill:#0f672a;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:2;stroke-linecap:square;stroke-miterlimit:2;stroke-dasharray:none;stroke-dashoffset:4.2;stroke-opacity:1"
      id="rect996"
      width="30"
