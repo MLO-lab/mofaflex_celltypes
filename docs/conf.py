@@ -125,7 +125,7 @@ nitpick_ignore = [
     #     ("py:class", "igraph.Graph"),
 ]
 
-ogp_site_url = "https://mofaflex.readthedocs.io/stable"
+ogp_site_url = "https://mofaflex.readthedocs.io/stable/"
 ogp_image = "_static/img/mofaflex_schematic.png"
 
 
