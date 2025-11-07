@@ -19,7 +19,7 @@ sys.path.insert(0, str(HERE / "extensions"))
 # NOTE: If you installed your project in editable mode, this might be stale.
 #       If this is the case, reinstall it to refresh the metadata
 info = metadata("mofaflex")
-project_name = info["Name"]
+project = info["Name"]
 author = info["Author-email"]
 copyright = f"{datetime.now():%Y}, {author}."
 version = info["Version"]
@@ -37,7 +37,7 @@ needs_sphinx = "4.0"
 html_context = {
     "display_github": True,  # Integrate GitHub
     "github_user": "bioFAM",
-    "github_repo": "mofaflex",
+    "github_repo": project,
     "github_version": "main",
     "conf_py_path": "/docs/",
 }
@@ -108,7 +108,7 @@ html_theme = "sphinx_book_theme"
 html_static_path = ["_static"]
 html_css_files = ["css/custom.css"]
 
-html_title = project_name
+html_title = project
 
 html_theme_options = {
     "repository_url": repository_url,
@@ -124,6 +124,10 @@ nitpick_ignore = [
     # you can add an exception to this list.
     #     ("py:class", "igraph.Graph"),
 ]
+
+ogp_site_url = "https://mofaflex.readthedocs.io/stable"
+ogp_image = "_static/img/mofaflex_schematic.png"
+
 
 # -- MathJax macros -----------------------------------------------------------
 mathjax3_config = {
