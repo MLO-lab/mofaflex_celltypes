@@ -13,7 +13,10 @@
 
 ![graphical abstract](https://raw.githubusercontent.com/bioFAM/mofaflex/main/docs/_static/img/mofaflex_schematic.svg)
 
-MOFA-FLEX is a versatile factor analysis framework designed to streamline the construction and training of complex matrix factorisation models for omics data. MOFA-FLEX is a probabilistic programming-based Bayesian factor analysis framework that integrates concepts from multiple existing methods while remaining modular and extensible. It generalises widely used matrix factorisation tools by incorporating flexible prior options (including structured sparsity priors for multi-omics data and covariate-informed priors for spatio-temporal data), non-negativity constraints, and diverse data likelihoods - allowing users to mix and match components to suit their specific needs. Additionally, MOFA-FLEX introduces a novel module for integrating prior biological knowledge in the form of gene sets or, more generally, variable sets, enabling the inference of interpretable latent factors linked to specific molecular programs.
+MOFA-FLEX is a versatile factor analysis framework designed to streamline the construction and training of complex matrix factorisation models for omics data.
+It is built on a probabilistic programming-based Bayesian factor analysis framework that integrates concepts from multiple existing methods while remaining modular and extensible.
+MOFA-FLEX generalises widely used matrix factorisation tools by incorporating flexible prior options (including structured sparsity priors for multi-omics data and covariate-informed priors for spatio-temporal data), non-negativity constraints, and diverse data likelihoods - allowing users to mix and match components to suit their specific needs.
+Additionally, MOFA-FLEX introduces a novel module for integrating prior biological knowledge in the form of gene sets or, more generally, variable sets, enabling the inference of interpretable latent factors linked to specific molecular programs.
 
 ## Getting started
 
@@ -76,8 +79,8 @@ If you use MOFA-FLEX in your work, please cite
 [codecov]: https://codecov.io/gh/bioFAM/mofaflex
 [documentation]: https://mofaflex.readthedocs.io
 [discussions]: https://github.com/bioFAM/mofaflex/discussions
-[changelog]: https://mofaflex.readthedocs.io/latest/changelog.html
-[getting started]: https://mofaflex.readthedocs.io/latest/notebooks/getting_started.html
-[tutorials]: https://mofaflex.readthedocs.io/latest/tutorials.html
-[api documentation]: https://mofaflex.readthedocs.io/latest/api/index.html
+[changelog]: https://mofaflex.readthedocs.io/stable/changelog.html
+[getting started]: https://mofaflex.readthedocs.io/stable/notebooks/getting_started.html
+[tutorials]: https://mofaflex.readthedocs.io/stable/tutorials.html
+[api documentation]: https://mofaflex.readthedocs.io/stable/api/index.html
 [pypi]: https://pypi.org/project/mofaflex
