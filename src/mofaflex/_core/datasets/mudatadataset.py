@@ -383,7 +383,7 @@ class MuDataDataset(MofaFlexDataset):
             align_to = "features"
             dict_reorder = slice(None, None, -1)
         attrm = f"{attr}m"
-        msg = ("group", "view")[dict_reorder]
+        outer_msg, inner_msg = ("group", "view")[dict_reorder]
 
         covariates, covariates_names = defaultdict(dict), {}
         covar_dims = defaultdict(set)
@@ -391,15 +391,15 @@ class MuDataDataset(MofaFlexDataset):
             for modname in self.view_names:
                 subdata = self._data[group_idx, self.feature_names[modname]]
                 mod = subdata.mod[modname]
-                dict_key = (group_name, modname)[dict_reorder]
+                outer_key, inner_key = (group_name, modname)[dict_reorder]
 
-                ckey = key.get(dict_key[0], None)
-                cmkey = mkey.get(dict_key[0], None)
+                ckey = key.get(outer_key, None)
+                cmkey = mkey.get(outer_key, None)
 
                 if ckey is None and cmkey is None:
                     continue
                 if ckey and cmkey:
-                    raise ValueError(f"Provide either key or mkey for {msg[0]} {dict_key[0]}, not both.")
+                    raise ValueError(f"Provide either key or mkey for {outer_msg} {outer_key}, not both.")
 
                 if ckey is not None:
                     ccov = None
@@ -411,8 +411,8 @@ class MuDataDataset(MofaFlexDataset):
                     elif ckey in getattr(subdata, attr).columns:
                         ccov = getattr(subdata, attr)[ckey].to_numpy()[:, None]
                     if ccov is not None:
-                        covariates[dict_key[0]][dict_key[1]] = ccov
-                        covariates_names[dict_key[0]] = np.asarray([ckey], dtype=object)
+                        covariates[outer_key][inner_key] = ccov
+                        covariates_names[outer_key] = np.asarray([ckey], dtype=object)
                 elif cmkey is not None:
                     needs_alignment = False
                     name = None
@@ -432,20 +432,20 @@ class MuDataDataset(MofaFlexDataset):
                             ccov = ccov.toarray()
                         if ccov.ndim == 1:
                             ccov = ccov[..., None]
-                        covar_dims[dict_key[0]].add(ccov.shape[1])
+                        covar_dims[outer_key].add(ccov.shape[1])
 
                         if needs_alignment:
                             ccov = self._align_local_array_to_global(
                                 ccov, modname, subdata, align_to=align_to, fill_value=fill_value(ccov.dtype)
                             )
-                        covariates[dict_key[0]][dict_key[1]] = ccov
+                        covariates[outer_key][inner_key] = ccov
                         if name is not None:
-                            covariates_names[dict_key[0]] = name
+                            covariates_names[outer_key] = name
 
         for name, covar_dim in covar_dims.items():
             if len(covar_dim) > 1:
                 raise ValueError(
-                    f"Number of covariate dimensions in {msg[0]} {name} must be the same across {msg[1]}s."
+                    f"Number of covariate dimensions in {outer_msg} {name} must be the same across {inner_msg}s."
                 )
         covariates.default_factory = None
         return covariates, covariates_names

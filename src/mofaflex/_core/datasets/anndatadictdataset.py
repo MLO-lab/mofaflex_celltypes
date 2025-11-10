@@ -407,50 +407,50 @@ class AnnDataDictDataset(MofaFlexDataset):
             align_to = "features"
             dict_reorder = slice(None, None, -1)
         attrm = f"{attr}m"
-        msg = ("group", "view")[dict_reorder]
+        outer_msg, inner_msg = ("group", "view")[dict_reorder]
 
         covariates, covariates_names = defaultdict(dict), {}
         covar_dims = defaultdict(set)
         for group_name, group in self._data.items():
             for view_name, view in group.items():
-                dict_key = (group_name, view_name)[dict_reorder]
+                outer_key, inner_key = (group_name, view_name)[dict_reorder]
 
-                ckey = key.get(dict_key[0], None)
-                cmkey = mkey.get(dict_key[0], None)
+                ckey = key.get(outer_key, None)
+                cmkey = mkey.get(outer_key, None)
 
                 if ckey is None and cmkey is None:
                     continue
                 if ckey and cmkey:
-                    raise ValueError(f"Provide either key or mkey for {msg[0]} {dict_key[0]}, not both.")
+                    raise ValueError(f"Provide either key or mkey for {outer_msg} {outer_key}, not both.")
 
                 if ckey is not None and ckey in getattr(view, attr).columns:
                     arr = getattr(view, attr)[ckey].to_numpy()
-                    covariates[dict_key[0]][dict_key[1]] = self._align_data_array_to_global(
+                    covariates[outer_key][inner_key] = self._align_data_array_to_global(
                         arr, group_name, view_name, align_to=align_to, fill_value=fill_value(arr.dtype)
                     )[:, None]
-                    covariates_names[dict_key[0]] = np.asarray([ckey], dtype=object)
+                    covariates_names[outer_key] = np.asarray([ckey], dtype=object)
                 elif cmkey is not None and cmkey in getattr(view, attrm):
                     covar = getattr(view, attrm)[cmkey]
                     if isinstance(covar, pd.DataFrame):
-                        covariates_names[dict_key[0]] = covar.columns.to_numpy()
+                        covariates_names[outer_key] = covar.columns.to_numpy()
                     elif isinstance(covar, pd.Series):
-                        covariates_names[dict_key[0]] = np.asarray([covar.name], dtype=object)
+                        covariates_names[outer_key] = np.asarray([covar.name], dtype=object)
                     elif sparse.issparse(covar):
                         covar = covar.toarray()
 
                     covar = np.asarray(covar)
                     if covar.ndim == 1:
                         covar = covar[..., None]
-                    covar_dims[dict_key[0]].add(covar.shape[1])
+                    covar_dims[outer_key].add(covar.shape[1])
 
-                    covariates[dict_key[0]][dict_key[1]] = self._align_data_array_to_global(
+                    covariates[outer_key][inner_key] = self._align_data_array_to_global(
                         covar, group_name, view_name, align_to=align_to, fill_value=fill_value(covar.dtype)
                     )
 
         for name, covar_dim in covar_dims.items():
             if len(covar_dim) > 1:
                 raise ValueError(
-                    f"Number of covariate dimensions in {msg[0]} {name} must be the same across {msg[1]}s."
+                    f"Number of covariate dimensions in {outer_msg} {name} must be the same across {outer_msg}s."
                 )
 
         covariates.default_factory = None
