@@ -3,6 +3,7 @@ import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import MISSING, asdict, dataclass, field, fields
+from functools import reduce
 from pathlib import Path
 from typing import Literal, get_args
 
@@ -476,7 +477,21 @@ class MOFAFLEX:
     def _setup_annotations(self, data):
         annotations = None
         if self._data_opts.annotations_varm_key is not None:
-            annotations, annotations_names = data.get_annotations(self._data_opts.annotations_varm_key)
+            annotations, annotations_names = data.get_covariates(
+                axis="features",
+                mkey=self._data_opts.annotations_varm_key,
+                fill_value=lambda dt: False if dt == np.bool_ else np.nan,
+            )
+            for view_name in list(annotations.keys()):
+                annot = annotations[view_name]
+                if len(annot):
+                    if all(a.dtype == np.bool for a in annot.values()):
+                        annot = reduce(np.logical_or, annot.values())
+                    else:
+                        annot = np.nanmean(np.stack(list(annot.values()), axis=1), axis=1)
+                    annotations[view_name] = annot.T
+                else:
+                    del annotations[view_name]
 
         informed = annotations is not None and len(annotations) > 0
         valid_n_factors = self._model_opts.n_factors is not None and self._model_opts.n_factors > 0
@@ -514,7 +529,7 @@ class MOFAFLEX:
             # TODO: annotations need to be processed if not aligned or full
             n_informed_factors = annotations[data.view_names[0]].shape[0]
             if data.view_names[0] in annotations_names:
-                factor_names += annotations_names[data.view_names[0]].to_list()
+                factor_names.extend(annotations_names[data.view_names[0]])
             else:
                 factor_names += [
                     f"Factor {k + 1}" for k in range(n_uninformed_factors, n_uninformed_factors + n_informed_factors)
@@ -748,7 +763,7 @@ class MOFAFLEX:
 
             if q.shape[0] > 1:  # min and max are not defined for dimensions of size 1
                 q = 2.0 * (q - np.min(q, axis=0)) / (np.max(q, axis=0) - np.min(q, axis=0)) - 1
-            else:
+            elif n > 0:
                 q = 2.0 * (q - np.min(q)) / (np.max(q) - np.min(q)) - 1
 
             # Add artifical dimension at dimension -2 for broadcasting

@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from anndata import AnnData
+from scipy.sparse import csr_array
 
 import mofaflex as mfl
 
@@ -52,15 +53,24 @@ def random_adata(rng, random_array):
                 {"covar": rng.random(size=nobs)},
                 index=obs_names if obs_names is not None else [f"cell_{i}" for i in range(nobs)],
             ),
-            var=pd.DataFrame(index=var_names if var_names is not None else [f"gene_{i}" for i in range(nvar)]),
+            var=pd.DataFrame(
+                {"covar": rng.random(size=nvar)},
+                index=var_names if var_names is not None else [f"gene_{i}" for i in range(nvar)],
+            ),
         )
-        adata.obsm["covar"] = pd.DataFrame(rng.random(size=(nobs, 3)), columns=["a", "b", "c"], index=adata.obs_names)
+        adata.obsm["covar_df"] = pd.DataFrame(
+            rng.random(size=(nobs, 3)), columns=["a", "b", "c"], index=adata.obs_names
+        )
+        adata.obsm["covar_array"] = rng.random(size=(nobs, 3))
+        adata.obsm["covar_sparse"] = csr_array(rng.poisson(size=(nobs, 3)))
         adata.obs["gvar_normal"] = rng.random(size=(nobs))
         adata.obs["gvar_bernoulli"] = rng.binomial(1, 0.5, size=(nobs))
         adata.obs["gvar_categorical"] = pd.Categorical(rng.choice(["A", "B", "C"], size=(nobs)))
-        adata.varm["annot"] = pd.DataFrame(
+        adata.varm["annot_df"] = pd.DataFrame(
             rng.choice([False, True], size=(nvar, 10)), columns=[f"annot_{i}" for i in range(10)], index=adata.var_names
         )
+        adata.varm["annot_array"] = rng.random(size=(nvar, 3))
+        adata.varm["annot_sparse"] = csr_array(rng.poisson(size=(nvar, 3)))
         return adata
 
     return _adata

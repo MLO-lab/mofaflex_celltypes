@@ -30,14 +30,19 @@ def mdata(rng):
         )
         if view < 2:
             adata.obs["covar"] = rng.random(size=len(cobs_names))
-            adata.obsm["covar"] = pd.DataFrame(
+            adata.obsm["covar_df"] = pd.DataFrame(
                 rng.random(size=(len(cobs_names), 3)), columns=["a", "b", "c"], index=adata.obs_names
             )
-            adata.varm["annot"] = pd.DataFrame(
+            adata.obsm["covar_array"] = rng.random(size=(len(cobs_names), 3))
+            adata.obsm["covar_sparse"] = sparse.csr_array(rng.poisson(size=(len(cobs_names), 3)))
+            adata.var["covar"] = rng.random(size=adata.n_vars)
+            adata.varm["annot_df"] = pd.DataFrame(
                 rng.random(size=(nvar_per_mod, 10)),
                 columns=[f"annot_view_{view}_{i}" for i in range(10)],
                 index=adata.var_names,
             )
+            adata.varm["annot_array"] = rng.random(size=(nvar_per_mod, 10))
+            adata.varm["annot_sparse"] = sparse.csr_array(rng.poisson(size=(nvar_per_mod, 4)))
         adatas[f"view_{view}"] = adata
 
     adatas["view_0"].X = sparse.csr_array(adatas["view_0"].X)
@@ -52,17 +57,31 @@ def mdata(rng):
     global_covar[~mdata.obs_names.isin(adatas["view_2"].obs_names)] = np.nan
     mdata.obs["covar"] = global_covar
 
+    global_covar = rng.random(size=mdata.n_vars)
+    global_covar[~mdata.var_names.isin(adatas["view_2"].var_names)] = np.nan
+    mdata.var["covar"] = global_covar
+
     global_covar = rng.random(size=(mdata.n_obs, 3))
     global_covar[~mdata.obs_names.isin(adatas["view_2"].obs_names)] = np.nan
-    mdata.obsm["covar"] = pd.DataFrame(global_covar, columns=["a", "b", "c"], index=mdata.obs_names)
+    mdata.obsm["covar_df"] = pd.DataFrame(global_covar, columns=["a", "b", "c"], index=mdata.obs_names)
+    mdata.obsm["covar_array"] = rng.permuted(global_covar, axis=0)
+
+    global_covar_sparse = sparse.csr_array(rng.poisson(size=(mdata.n_obs, 3)).astype(np.float32))
+    global_covar_sparse[~mdata.obs_names.isin(adatas["view_2"].obs_names)] = np.nan
+    mdata.obsm["covar_sparse"] = global_covar_sparse
 
     global_annot = rng.random(size=(mdata.n_vars, 10))
     global_annot[~mdata.var_names.isin(adatas["view_2"].var_names)] = np.nan
-    mdata.varm["annot"] = pd.DataFrame(
+    mdata.varm["annot_df"] = pd.DataFrame(
         global_annot, columns=[f"global_annot_{i}" for i in range(10)], index=mdata.var_names
     )
+    mdata.varm["annot_array"] = rng.permuted(global_annot, axis=0)
 
-    mdata.var["global_highly_variable"] = rng.choice((True, False), size=mdata.n_var, p=[0.3, 0.7])
+    global_annot_sparse = sparse.csr_array(rng.poisson(size=(mdata.n_var, 4)).astype(np.float32))
+    global_annot_sparse[~mdata.var_names.isin(adatas["view_2"].var_names)] = np.nan
+    mdata.varm["annot_sparse"] = global_annot_sparse
+
+    mdata.var["global_highly_variable"] = rng.choice((True, False), size=mdata.n_vars, p=[0.3, 0.7])
 
     return mdata
 
@@ -96,6 +115,8 @@ def test_instance(dataset):
 
 
 def test_properties(mdata, dataset, subset_var):
+    assert sorted(dataset.group_names) == sorted(mdata.obs["batch"].unique())
+    assert sorted(dataset.view_names) == sorted(mdata.mod.keys())
     for group_name, sample_names in dataset.sample_names.items():
         cmdata = mdata[mdata.obs["batch"] == group_name, :]
         assert np.all(np.sort(sample_names) == cmdata.obs_names.sort_values().to_numpy())
@@ -325,61 +346,85 @@ def test_apply_to_group(mdata, dataset, usedask):
             )
 
 
-def test_get_covariates_from_obs(mdata, dataset):
-    covars, covar_names = dataset.get_covariates(obs_key=dict.fromkeys(dataset.group_names, "covar"))
+@pytest.mark.parametrize("axis", [0, 1])
+def test_get_covariates_from_key(mdata, dataset, subset_var, axis):
+    attr = "obs" if axis == 0 else "var"
+    namesattr = f"{attr}_names"
+    dsetnamesattr = "sample_names" if axis == 0 else "feature_names"
+    dict_reorder = slice(None) if axis == 0 else slice(None, None, -1)
 
-    for group_name, group_covar in covars.items():
-        sample_names = pd.Index(dataset.sample_names[group_name])
-        assert covar_names[group_name] == "covar"
-        for view_name, view_covar in group_covar.items():
-            if view_name != "view_2":
-                view = mdata[mdata.obs["batch"] == group_name][view_name]
-                covar = view.obs["covar"]
-                idx = sample_names.get_indexer(view.obs_names)
-                assert np.all(covar == view_covar[idx].squeeze())
-                assert np.all(np.isnan(view_covar[~sample_names.isin(view.obs_names)]))
+    covars, covar_names = dataset.get_covariates(axis=axis, key="covar")
+
+    for group_name in dataset.group_names:
+        subdata = mdata[mdata.obs["batch"] == group_name]
+        for modname in subdata.mod.keys():
+            dict_key = (group_name, modname)[dict_reorder]
+            assert covar_names[dict_key[0]] == ["covar"]
+
+            names = getattr(dataset, dsetnamesattr)[dict_key[0]]
+            if modname != "view_2":
+                view = subdata.mod[modname][:, get_varnames(subdata, modname, subset_var)]
+                covar = getattr(view, attr)["covar"].to_numpy()
+                globalidx = np.isin(names, getattr(view, namesattr))
+                localidx = getattr(view, namesattr).get_indexer(names)
+                localidx = localidx[localidx >= 0]
+                assert np.all(
+                    covars[dict_key[0]][dict_key[1]][globalidx].squeeze()
+                    == getattr(view, attr)["covar"].to_numpy()[localidx]
+                )
+                assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][~globalidx]))
             else:
-                covar = mdata.obs.loc[mdata.obs["batch"] == group_name, "covar"]
+                covar = getattr(subdata, attr).loc[names, "covar"].to_numpy()
                 nanidx = np.isnan(covar)
-                idx = sample_names.get_indexer(covar.index)
-                assert np.all(covar[~nanidx] == view_covar[idx][~nanidx].squeeze())
-                assert np.all(np.isnan(view_covar[nanidx]))
+                assert np.all(covar[~nanidx] == covars[dict_key[0]][dict_key[1]][~nanidx].squeeze())
+                assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][nanidx]))
 
 
-def test_get_covariates_from_obsm(mdata, dataset):
-    covars, covar_names = dataset.get_covariates(obsm_key=dict.fromkeys(dataset.group_names, "covar"))
+@pytest.mark.parametrize("type", ("df", "array", "sparse"))
+@pytest.mark.parametrize("axis, mkey", [(0, "covar"), (1, "annot")])
+def test_get_covariates_from_keym(mdata, dataset, subset_var, axis, mkey, type):
+    mkey = f"{mkey}_{type}"
+    attr = "obs" if axis == 0 else "var"
+    attrm = f"{attr}m"
+    namesattr = f"{attr}_names"
+    dsetnamesattr = "sample_names" if axis == 0 else "feature_names"
+    dict_reorder = slice(None) if axis == 0 else slice(None, None, -1)
 
-    for group_name, group_covar in covars.items():
-        assert np.all(covar_names[group_name] == ["a", "b", "c"])
-        sample_names = pd.Index(dataset.sample_names[group_name])
-        for view_name, view_covar in group_covar.items():
-            if view_name != "view_2":
-                view = mdata[mdata.obs["batch"] == group_name][view_name]
-                covar = view.obsm["covar"]
-                idx = sample_names.get_indexer(view.obs_names)
-                assert np.all(covar == view_covar[idx].squeeze())
-                assert np.all(np.isnan(view_covar[~sample_names.isin(view.obs_names)]))
+    covars, covar_names = dataset.get_covariates(axis=axis, mkey=mkey)
+
+    for group_name in dataset.group_names:
+        for modname in mdata.mod.keys():
+            dict_key = (group_name, modname)[dict_reorder]
+            names = getattr(dataset, dsetnamesattr)[dict_key[0]]
+            subdata = mdata[dataset.sample_names[group_name], dataset.feature_names[modname]]
+            if modname != "view_2":
+                view = subdata.mod[modname]
+                covar = getattr(view, attrm)[mkey]
+                if type == "df":
+                    assert np.all(covar_names[dict_key[0]] == getattr(view, attrm)[mkey].columns)
+                    covar = covar.to_numpy()
+
+                globalidx = np.isin(names, getattr(view, namesattr))
+                localidx = getattr(view, namesattr).get_indexer(names)
+                localidx = localidx[localidx >= 0]
+
+                gt = getattr(view, attrm)[mkey]
+                if type == "df":
+                    gt = gt.iloc[localidx, :].to_numpy()
+                else:
+                    gt = gt[localidx, :]
+                assert np.all(covars[dict_key[0]][dict_key[1]][globalidx, :] == gt)
+                assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][~globalidx, :]))
             else:
-                covar = mdata.obsm["covar"][mdata.obs["batch"] == group_name]
-                idx = sample_names.get_indexer(covar.index)
-                covar = covar.to_numpy()
+                covar = getattr(subdata, attrm)[mkey]
+                if type == "df":
+                    assert np.all(covar_names[dict_key[0]] == getattr(subdata, attrm)[mkey].columns)
+                    covar = covar.to_numpy()
+                elif type == "sparse":
+                    covar = covar.toarray()
                 nanidx = np.isnan(covar)
-                assert np.all(covar[~nanidx] == view_covar[idx][~nanidx].squeeze())
-                assert np.all(np.isnan(view_covar[nanidx]))
-
-
-def test_get_annotations(mdata, dataset):
-    annot, annot_names = dataset.get_annotations(varm_key=dict.fromkeys(dataset.view_names, "annot"))
-
-    for view_name in dataset.view_names:
-        if view_name != "view_2":
-            assert np.all(
-                annot[view_name] == mdata[view_name].varm["annot"].loc[dataset.feature_names[view_name], :].to_numpy().T
-            )
-            assert np.all(annot_names[view_name] == [f"annot_{view_name}_{i}" for i in range(10)])
-        else:
-            assert np.all(annot[view_name] == mdata.varm["annot"].loc[dataset.feature_names[view_name], :].to_numpy().T)
-            assert np.all(annot_names[view_name] == [f"global_annot_{i}" for i in range(10)])
+                assert np.all(covar[~nanidx] == covars[dict_key[0]][dict_key[1]][~nanidx])
+                assert np.all(np.isnan(covars[dict_key[0]][dict_key[1]][nanidx]))
 
 
 def test_get_missing_obs(mdata, dataset):
