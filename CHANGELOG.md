@@ -9,11 +9,18 @@ and this project adheres to [Semantic Versioning][].
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
+
 ### Changed
 - the `show_featurenames` argument to `pl.factor` is now called `show_samplenames` to better reflect what it actually does
+
+## [0.1.1] (Unreleased)
+
+### Added
+- `tl.factor_correlation` to calculate the correlation between factors
 
 ## [0.1.0]
 
 - Initial release
 
+[0.1.1]: https://github.com/bioFAM/mofaflex/releases/tag/v0.1.1
 [0.1.0]: https://github.com/bioFAM/mofaflex/releases/tag/v0.1.0
