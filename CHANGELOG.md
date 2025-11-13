@@ -8,7 +8,9 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.1.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
-<!-- ## [Unreleased] -->
+## [Unreleased]
+### Changed
+- the `show_featurenames` argument to `pl.factor` is now called `show_samplenames` to better reflect what it actually does
 
 ## [0.1.0]
 

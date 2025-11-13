@@ -552,7 +552,7 @@ def all_weights(
 def factor(
     model: MOFAFLEX,
     factor: int = 1,
-    show_featurenames: bool = False,
+    show_samplenames: bool = False,
     figsize: tuple[float, float] | None = None,  # F821
 ) -> p9.ggplot:
     """Plot factor values (y-axis) for each sample (x-axis).
@@ -560,7 +560,7 @@ def factor(
     Args:
         model: The MOFA-FLEX model.
         factor: The factor to plot.
-        show_featurenames: Whether to show the feature names on the X axis.
+        show_samplenames: Whether to show the feature names on the X axis.
         figsize: Figure size in inches.
     """
     factors = model.get_factors(ordered=False)
@@ -585,7 +585,7 @@ def factor(
             panel_grid_minor_x=p9.element_blank(),
         )
     )
-    if not show_featurenames:
+    if not show_samplenames:
         plt = plt + p9.theme(axis_text_x=p9.element_blank(), axis_ticks_x=p9.element_blank())
     return plt
 
