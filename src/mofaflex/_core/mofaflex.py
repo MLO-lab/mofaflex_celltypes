@@ -1,11 +1,13 @@
+import inspect
 import logging
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import MISSING, asdict, dataclass, field, fields
-from functools import reduce
+from dataclasses import dataclass
+from functools import update_wrapper
+from itertools import chain
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Literal, NamedTuple, get_args
 
 import numpy as np
 import numpy.typing as npt
@@ -14,7 +16,6 @@ import pyro
 import torch
 from anndata import AnnData
 from array_api_compat import array_namespace
-from dtw import dtw
 from mudata import MuData
 from pyro.infer import SVI, TraceMeanField_ELBO
 from pyro.optim import ClippedAdam
@@ -27,64 +28,25 @@ from tqdm.auto import tqdm
 from tqdm.notebook import tqdm_notebook
 
 from .. import pl
-from . import gp, preprocessing
-from .datasets import CovariatesDataset, GuidingVarsDataset, MofaFlexBatchSampler, MofaFlexDataset, StackDataset
+from . import preprocessing
+from .datasets import GuidingVarsDataset, MofaFlexBatchSampler, MofaFlexDataset, StackDataset
 from .io import MOFACompatOption, load_model, save_model
 from .likelihoods import Likelihood, LikelihoodType
-from .pcgse import pcgse_test
+from .priors import API, APIType, FactorPriorType, Prior, SmoothOptions, WeightPriorType
 from .pyro import MofaFlexModel
-from .pyro.priors import FactorPriorType, WeightPriorType
 from .training import EarlyStopper
-from .utils import MeanStd, impute, sample_all_data_as_one_batch
+from .utils import MeanStd, Options, impute, sample_all_data_as_one_batch
 
 _logger = logging.getLogger(__name__)
 
-_ResultsTypeDF = dict[str, pd.DataFrame | AnnData | npt.NDArray[np.float32]]
-_ResultsTypeSeries = dict[str, pd.Series | AnnData | npt.NDArray[np.float32]]
+
+class _PriorApiProperty(NamedTuple):
+    obj: Prior
+    attr: str
 
 
 @dataclass(kw_only=True)
-class _Options:
-    def __or__(self, other):
-        if self.__class__ is not other.__class__:
-            raise TypeError("Can only merge objects of the same type")
-
-        kwargs = self.asdict()
-        for f in fields(other):
-            val = getattr(other, f.name)
-            if (
-                f.default is not MISSING
-                and val != f.default
-                or f.default_factory is not MISSING
-                and val != f.default_factory()
-            ):
-                kwargs[f.name] = val
-        return self.__class__(**kwargs)
-
-    def __ior__(self, other):
-        if self.__class__ is not other.__class__:
-            raise TypeError("Can only merge objects of the same type")
-
-        for f in fields(other):
-            val = getattr(other, f.name)
-            if (
-                f.default is not MISSING
-                and val != f.default
-                or f.default_factory is not MISSING
-                and val != f.default_factory()
-            ):
-                setattr(self, f.name, val)
-        return self
-
-    def __post_init__(self):
-        # after an HDF5 roundtrip, these are numpy scalars, which PyTorch doesn't handle well'
-        for f in fields(self):
-            if f.type in (float, int, bool):
-                setattr(self, f.name, f.type(getattr(self, f.name)))
-
-
-@dataclass(kw_only=True)
-class DataOptions(_Options):
+class DataOptions(Options):
     """Options for the data."""
 
     group_by: str | Sequence[str] | None = None
@@ -130,7 +92,7 @@ class DataOptions(_Options):
 
 
 @dataclass(kw_only=True)
-class ModelOptions(_Options):
+class ModelOptions(Options):
     """Options for the model."""
 
     n_factors: int = 0
@@ -170,7 +132,7 @@ class ModelOptions(_Options):
 
 
 @dataclass(kw_only=True)
-class TrainingOptions(_Options):
+class TrainingOptions(Options):
     """Options for training."""
 
     device: str | torch.device = "cuda"
@@ -212,48 +174,6 @@ class TrainingOptions(_Options):
         self.device = torch.device(self.device)
 
 
-@dataclass(kw_only=True)
-class SmoothOptions(_Options):
-    """Options for Gaussian processes."""
-
-    n_inducing: int = 100
-    """Number of inducing points."""
-
-    kernel: Literal["RBF", "Matern"] = "RBF"
-    """Kernel function to use."""
-
-    mefisto_kernel: bool = True
-    """Whether to use the MEFISTO group covariance kernel or treat groups independently."""
-
-    independent_lengthscales: bool = False
-    """Whether to use a separate lengthscale per covariate dimension."""
-
-    group_covar_rank: int = 1
-    """Rank of the group correlation matrix. Only relevant if `mefisto_kernel=True`."""
-
-    warp_groups: Sequence[str] = field(default_factory=list)
-    """List of groups to apply dynamic time warping to."""
-
-    warp_interval: int = 20
-    """Apply dynamic time warping every `warp_interval` epochs."""
-
-    warp_open_begin: bool = True
-    """Perform open-ended alignment."""
-
-    warp_open_end: bool = True
-    """Perform open-ended alignment."""
-
-    warp_reference_group: str | None = None
-    """Reference group to align the others to. Defaults to the first group of `warp_groups`."""
-
-    def __post_init__(self):
-        super().__post_init__()
-        if isinstance(self.warp_groups, str):
-            self.warp_groups = [self.warp_groups]
-        else:
-            self.warp_groups = list(self.warp_groups)  # in case the user passed a tuple here, we need a list for saving
-
-
 class MOFAFLEX:
     """Fit the model using the provided data.
 
@@ -267,7 +187,7 @@ class MOFAFLEX:
         *args: Options for training.
     """
 
-    def __init__(self, data: MuData | Mapping[str, Mapping[str, AnnData]], *args: _Options):
+    def __init__(self, data: MuData | Mapping[str, Mapping[str, AnnData]], *args: Options):
         self._preprocess_options(*args)
         data = self._make_dataset(data)
         self._adjust_options(data)
@@ -279,16 +199,78 @@ class MOFAFLEX:
         preprocessor = self._make_preprocessor(data)
 
         # this needs to be after preprocessor, since preprocessor may filter out features with zero variance
-        self._setup_annotations(data)
-        self._setup_guiding_vars()
-
         self._metadata = data.get_obs()
         self._view_names = data.view_names
         self._group_names = data.group_names
         self._sample_names = data.sample_names
         self._feature_names = data.feature_names
 
+        self._prior_api_properties: dict[str, _PriorApiProperty] = {}
+
         self._fit(data, preprocessor)
+
+    def _results_to_df(
+        self,
+        results: Mapping[str, np.ndarray],
+        axis: Literal[0, 1],
+        ordered: bool = False,
+        factors_subset: slice = slice(None),
+    ):
+        factor_names = self.factor_names[factors_subset]
+        ret = {}
+        for name, res in results.items():
+            if ordered:
+                factor_order = self.factor_order[factors_subset]
+                factor_order = np.argsort(np.argsort(factor_order))
+                res = res[:, factor_order]
+            ret[name] = pd.DataFrame(
+                res, index=self.sample_names[name] if axis == 0 else self.feature_names[name], columns=factor_names
+            )
+        return ret
+
+    def _wrap_api_method(self, axis: Literal[0, 1], prior: Prior, api: API):
+        def wrapper_func(self, *args, **kwargs):
+            with torch.device(self._train_opts.device):
+                ret = getattr(prior, api.name)
+                if api.type == APIType.method:
+                    ret = ret(*args, **kwargs)
+            return ret
+
+        if not api.has_factors:
+            wrapped = wrapper_func
+        else:
+
+            def wrapper_func_order(self, *args, ordered: bool = False, **kwargs):
+                ret = wrapper_func(self, *args, **kwargs)
+                factors_subset = getattr(prior, api.factors_subset) if api.factors_subset is not None else slice(None)
+                return self._results_to_df(ret, axis, ordered, factors_subset)
+
+            wrapped = wrapper_func_order
+
+        return wrapped
+
+    def _init_api(self):
+        for axis, priors in ((0, self._model_opts.factor_prior), (1, self._model_opts.weight_prior)):
+            for prior in priors:
+                for api in prior.api():
+                    name = _apinames[(axis, prior.__class__.__name__, api.name)]
+                    if api.type == APIType.property and not api.has_factors:
+                        self._prior_api_properties[name] = _PriorApiProperty(prior, api.name)
+                        continue
+                    wrapped = self._wrap_api_method(axis, prior, api)
+                    dummy = getattr(self.__class__, name)
+                    update_wrapper(wrapped, dummy)
+                    setattr(self, name, wrapped.__get__(self))
+
+    def __getattribute__(self, name):
+        try:
+            prop = super().__getattribute__("_prior_api_properties")[name]
+            return getattr(prop.obj, prop.attr)
+        except (KeyError, AttributeError):
+            return super().__getattribute__(name)
+
+    def __dir__(self):
+        return chain(super().__dir__(), self._prior_api_properties.keys())
 
     def _make_dataset(self, data: MuData | Mapping[str, Mapping[str, AnnData]]) -> MofaFlexDataset:
         return MofaFlexDataset(
@@ -374,19 +356,14 @@ class MOFAFLEX:
         return sum(self.n_samples.values())
 
     @property
-    def n_factors(self):
+    def n_total_factors(self):
         """Total number of factors."""
         return self._model_opts.n_factors
 
     @property
-    def n_uninformed_factors(self) -> int:
+    def n_factors(self) -> int:
         """Number of uninformed factors."""
-        return self._n_uninformed_factors
-
-    @property
-    def n_informed_factors(self) -> int:
-        """Number of informed factors."""
-        return self._n_informed_factors
+        return self._n_factors
 
     @property
     def factor_order(self) -> npt.NDArray[int]:
@@ -408,36 +385,6 @@ class MOFAFLEX:
     def factor_names(self) -> npt.NDArray[str | np.str_]:
         """Factor names."""
         return self._factor_names
-
-    @property
-    def warped_covariates(self) -> dict[str, npt.NDArray[np.float32]] | None:
-        """Time-warped covariates for each group, if using a GP prior and dynamic time warping was enabled."""
-        return self._covariates if hasattr(self, "_orig_covariates") else None
-
-    @property
-    def covariates(self) -> dict[str, npt.NDArray[np.float32]]:
-        """Covariates for each group, if using a GP prior."""
-        return self._orig_covariates if hasattr(self, "_orig_covariates") else self._covariates
-
-    @property
-    def covariates_names(self) -> dict[str, str | npt.NDArray[str | np.str_]]:
-        """Covariate names for each group where they could be inferred from the input."""
-        return self._covariates_names
-
-    @property
-    def gp_lengthscale(self) -> npt.NDArray[np.float32] | None:
-        """Inferred lengthscales for each factor, if using a GP prior."""
-        return self._gp.lengthscale.detach().cpu().numpy() if self._gp is not None else None
-
-    @property
-    def gp_scale(self) -> npt.NDArray[np.float32] | None:
-        """Inferred variance scales (smoothness) for each factor, if using a GP prior."""
-        return self._gp.outputscale.detach().cpu().numpy() if self._gp is not None else None
-
-    @property
-    def gp_group_correlation(self) -> npt.NDArray[np.float32]:
-        """Between-group correlation for each factor, if using a GP prior."""
-        return self._gp.group_corr.detach().cpu().numpy() if self._gp is not None else None
 
     @property
     def training_loss(self) -> npt.NDArray[np.float32]:
@@ -475,122 +422,15 @@ class MOFAFLEX:
             )
 
     def _setup_annotations(self, data):
-        annotations = None
-        if self._data_opts.annotations_varm_key is not None:
-            annotations, annotations_names = data.get_covariates(
-                axis="features",
-                mkey=self._data_opts.annotations_varm_key,
-                fill_value=lambda dt: False if dt == np.bool_ else np.nan,
-            )
-            for view_name in list(annotations.keys()):
-                annot = annotations[view_name]
-                if len(annot):
-                    if all(a.dtype == np.bool for a in annot.values()):
-                        annot = reduce(np.logical_or, annot.values())
-                    else:
-                        annot = np.nanmean(np.stack(list(annot.values()), axis=1), axis=1)
-                    annotations[view_name] = annot.T
-                else:
-                    del annotations[view_name]
+        self._n_factors = self._model_opts.n_factors
+        factor_names = [f"Factor {k + 1}" for k in range(self._model_opts.n_factors)]
+        for prior in chain(self._model_opts.factor_prior, self._model_opts.weight_prior):
+            factor_names = prior.adjust_factors(factor_names)
 
-        informed = annotations is not None and len(annotations) > 0
-        valid_n_factors = self._model_opts.n_factors is not None and self._model_opts.n_factors > 0
-
-        n_uninformed_factors = 0
-        n_informed_factors = 0
-        factor_names = []
-
-        if informed:
-            ignored_views = []
-            for vn in data.view_names:
-                if vn in annotations and (prior := self._model_opts.weight_prior[vn]) != "Horseshoe":
-                    ignored_views.append(vn)
-                    _logger.warning(
-                        f"Horseshoe prior required for annotations, but got {prior} for view {vn}. Annotations will be ignored."
-                    )
-            if len(ignored_views) == data.view_names.size:
-                informed = False
-                n_informed_factors = 0
-
-        if not informed and not valid_n_factors:
-            raise ValueError(
-                "Invalid latent configuration, "
-                "please provide either a collection of prior masks, "
-                "or set `n_factors` to a positive integer."
-            )
-
-        if self._model_opts.n_factors is not None:
-            n_uninformed_factors = self._model_opts.n_factors
-            factor_names += [f"Factor {k + 1}" for k in range(n_uninformed_factors)]
-
-        prior_masks = {}
-
-        if informed:
-            # TODO: annotations need to be processed if not aligned or full
-            n_informed_factors = annotations[data.view_names[0]].shape[0]
-            if data.view_names[0] in annotations_names:
-                factor_names.extend(annotations_names[data.view_names[0]])
-            else:
-                factor_names += [
-                    f"Factor {k + 1}" for k in range(n_uninformed_factors, n_uninformed_factors + n_informed_factors)
-                ]
-
-            prior_masks = {vn: vm.astype(np.bool_) for vn, vm in annotations.items()}
-
-        self._n_uninformed_factors = n_uninformed_factors
-        self._n_informed_factors = n_informed_factors
-        self._model_opts.n_factors = n_uninformed_factors + n_informed_factors
+        self._model_opts.n_factors = len(factor_names)
 
         self._factor_names = np.asarray(factor_names)
         self._factor_order = np.arange(self._model_opts.n_factors)
-
-        # storing prior_masks as full annotations instead of partial annotations
-        self._annotations = prior_masks
-
-    def _setup_gp(self, covariates=None, full_setup=True):
-        gp_group_names = [g for g in self.group_names if self._model_opts.factor_prior[g] == "GP"]
-
-        gp_warp_groups_order = None
-        if len(gp_group_names):
-            if full_setup:
-                if len(self._gp_opts.warp_groups) > 1:
-                    if not set(self._gp_opts.warp_groups) <= set(gp_group_names):
-                        raise ValueError(
-                            "The set of groups with dynamic time warping must be a subset of groups with a GP factor prior."
-                        )
-                    gp_warp_groups_order = {}
-                    for g in self._gp_opts.warp_groups:
-                        ccov = covariates[g].squeeze()
-                        if ccov.ndim > 1:
-                            raise ValueError(
-                                f"Warping can only be performed with 1D covariates, but the covariate for group {g} has {ccov.ndim} dimensions."
-                            )
-                        gp_warp_groups_order[g] = ccov.argsort()
-                    self._orig_covariates = {g: c.copy() for g, c in covariates.items()}
-
-                    if self._gp_opts.warp_reference_group is None:
-                        self._gp_opts.warp_reference_group = self._gp_opts.warp_groups[0]
-                elif len(self._gp_opts.warp_groups) == 1:
-                    _logger.warning("Need at least 2 groups for warping, but only one was given. Ignoring warping.")
-                    self._gp_opts.warp_groups = []
-            else:
-                covariates = self._covariates
-
-            self._gp = gp.GP(
-                n_inducing=self._gp_opts.n_inducing,
-                covariates=(covariates[g] for g in gp_group_names),
-                n_factors=self._model_opts.n_factors,
-                n_groups=len(gp_group_names),
-                kernel=self._gp_opts.kernel,
-                independent_lengthscales=self._gp_opts.independent_lengthscales,
-                rank=self._gp_opts.group_covar_rank,
-                use_mefisto_kernel=self._gp_opts.mefisto_kernel,
-            ).to(self._train_opts.device)
-            self._gp_group_names = gp_group_names
-        else:
-            self._gp = None
-            self._gp_group_names = None
-        return gp_warp_groups_order
 
     def _setup_guiding_vars(self):
         guiding_vars_names = (
@@ -602,26 +442,11 @@ class MOFAFLEX:
         self._model_opts.n_factors = self._model_opts.n_factors + self._n_guiding_vars
 
         # update global factor names (dense factors + guiding vars + informed factors)
-        self._factor_names = np.concatenate(
-            [
-                self._factor_names[: self.n_uninformed_factors],
-                guiding_vars_names,
-                self._factor_names[self.n_uninformed_factors :],
-            ]
-        )
+        self._factor_names = np.concatenate((self._factor_names, guiding_vars_names))
 
     def _setup_svi(
-        self,
-        prior_scales,
-        init_tensor,
-        covariates,
-        guiding_vars_factors,
-        guiding_vars_n_categories,
-        feature_means,
-        sample_means,
+        self, init_tensor, covariates, guiding_vars_factors, guiding_vars_n_categories, feature_means, sample_means
     ):
-        gp_warp_groups_order = self._setup_gp(covariates=covariates)
-
         model = MofaFlexModel(
             n_samples=self.n_samples,
             n_features=self.n_features,
@@ -631,15 +456,14 @@ class MOFAFLEX:
             guiding_vars_n_categories=guiding_vars_n_categories,
             guiding_vars_factors=guiding_vars_factors,
             guiding_vars_scales=self._model_opts.guiding_vars_scales,
-            prior_scales=prior_scales,
             factor_prior=self._model_opts.factor_prior,
             weight_prior=self._model_opts.weight_prior,
             nonnegative_factors=self._model_opts.nonnegative_factors,
             nonnegative_weights=self._model_opts.nonnegative_weights,
-            gp=self._gp,
             feature_means=feature_means,
             sample_means=sample_means,
             factors_init_tensor=init_tensor,
+            annotation_confidence=self._model_opts.annotation_confidence,
         ).to(self._train_opts.device)
 
         n_iterations = int(self._train_opts.max_epochs * (self.n_samples_total // self._train_opts.batch_size))
@@ -657,48 +481,15 @@ class MOFAFLEX:
             ),
         )
 
-        return svi, model, gp_warp_groups_order
+        return svi, model
 
     def _post_fit(self, data, preprocessor, covariates, model, train_loss_elbo):
         self._weights = model.get_weights()
         self._factors = model.get_factors()
         self._dispersions = model.get_dispersion()
-        self._sparse_factors_probabilities = model.get_sparse_factor_probabilities()
-        self._sparse_weights_probabilities = model.get_sparse_weight_probabilities()
-        self._sparse_factors_precisions = model.get_sparse_factor_precisions()
-        self._sparse_weights_precisions = model.get_sparse_weight_precisions()
-        self._covariates, self._covariates_names = (covariates.covariates, covariates.covariates_names)
-        self._gps = self._get_gps(self._covariates)
         self._train_loss_elbo = np.asarray(train_loss_elbo)
 
-        self._df_r2_full, self._df_r2_factors, self._factor_order = self._sort_factors(
-            data,
-            weights=self.get_weights(return_type="numpy", moment="mean", sparse_type="mix", ordered=False),
-            factors=self.get_factors(return_type="numpy", moment="mean", sparse_type="mix", ordered=False),
-        )
-
         self._preprocessor_state = preprocessor.state_dict()
-
-        if len(self._annotations) > 0:
-            self._pcgse = pcgse_test(
-                data,
-                self._model_opts.nonnegative_weights,
-                self.get_annotations("pandas"),
-                self.get_weights("pandas"),
-                min_size=1,
-                subsample=1000,
-            )
-        else:
-            self._pcgse = None
-
-        if self._train_opts.save_path is not False:
-            if self._train_opts.save_path is None:
-                self._train_opts.save_path = f"mofaflex_{time.strftime('%Y%m%d_%H%M%S')}.h5"
-            else:
-                self._train_opts.save_path = str(self._train_opts.save_path)
-            _logger.info(f"Saving results to {self._train_opts.save_path}...")
-            Path(self._train_opts.save_path).parent.mkdir(parents=True, exist_ok=True)
-            self._save(self._train_opts.save_path, self._train_opts.mofa_compat, data, preprocessor.feature_means)
 
     @staticmethod
     def _init_factor_group(adata, group_name, view_name, impute_missings, initializer):
@@ -774,7 +565,7 @@ class MOFAFLEX:
 
         return init_tensor
 
-    def _preprocess_options(self, *args: _Options):
+    def _preprocess_options(self, *args: Options):
         self._data_opts = DataOptions()
         self._model_opts = ModelOptions()
         self._train_opts = TrainingOptions()
@@ -851,46 +642,47 @@ class MOFAFLEX:
         if self._train_opts.batch_size is None or not (0 < self._train_opts.batch_size <= data.n_samples_total):
             self._train_opts.batch_size = data.n_samples_total
 
+        factor_prior_groups = defaultdict(list)
+        for group_name, prior in self._model_opts.factor_prior.items():
+            factor_prior_groups[prior].append(group_name)
+        self._model_opts.factor_prior = []
+        for priorname, gnames in factor_prior_groups.items():
+            prior = Prior(
+                priorname,
+                axis=0,
+                names=gnames,
+                covariates_obs_key=self._data_opts.covariates_obs_key,
+                covariates_obsm_key=self._data_opts.covariates_obsm_key,
+                options=self._gp_opts,
+            )
+            self._model_opts.factor_prior.append(prior)
+
+        weight_prior_groups = defaultdict(list)
+        for view_name, prior in self._model_opts.weight_prior.items():
+            weight_prior_groups[prior].append(view_name)
+        self._model_opts.weight_prior = [
+            Prior(prior, axis=1, names=gnames, annotations_varm_key=self._data_opts.annotations_varm_key)
+            for prior, gnames in weight_prior_groups.items()
+        ]
+
     def _fit(self, data, preprocessor):
         pyro.set_rng_seed(self._train_opts.seed)
 
-        # informed factors
-        prior_scales = None
-        if self.n_informed_factors > 0:
-            prior_scales = {
-                vn: np.clip(
-                    self._annotations.get(
-                        vn, np.broadcast_to(0, (self.n_informed_factors, self.n_features[vn]))
-                    ).astype(np.float32)
-                    + (1 - self._model_opts.annotation_confidence),
-                    1e-8,
-                    1.0,
-                )
-                for vn in self.view_names
-            }
+        datasets = {"data": data}
+        for prior in chain(self._model_opts.factor_prior, self._model_opts.weight_prior):
+            if priordsets := prior.get_datasets(data):
+                datasets.update(priordsets)
 
-            if self.n_uninformed_factors + self.n_guided_factors > 0:
-                prior_scales = {
-                    vn: np.concatenate(
-                        (
-                            np.ones(
-                                (self.n_uninformed_factors + self.n_guided_factors, data.n_features[vn]), dtype=vm.dtype
-                            ),
-                            vm,
-                        ),
-                        axis=0,
-                    )
-                    for vn, vm in prior_scales.items()
-                }
+        # this needs to run after prior.get_datasets()
+        self._setup_annotations(data)
+        self._setup_guiding_vars()
 
-        # guided factors
         guiding_vars_factors = {
-            self.factor_names[self.n_uninformed_factors + i]: self.n_uninformed_factors + i
+            self.factor_names[self._model_opts.n_factors - self.n_guided_factors + i]: self._model_opts.n_factors
+            - self.n_guided_factors
+            + i
             for i in range(self.n_guided_factors)
         }
-
-        covariates = CovariatesDataset(data, self._data_opts.covariates_obs_key, self._data_opts.covariates_obsm_key)
-        datasets = {"data": data, "covariates": covariates}
 
         # get unique categories for each guiding variable
         guiding_vars_n_categories = {}
@@ -903,7 +695,7 @@ class MOFAFLEX:
                     # find number of unique categories across groups
                     for group_name in self._group_names:
                         guiding_vars_categories.update(
-                            map(tuple, guiding_vars.datasets[guiding_var_name].covariates[group_name])
+                            guiding_vars.datasets[guiding_var_name].covariates[group_name].iloc[:, 0].to_list()
                         )
                     guiding_vars_n_categories[guiding_var_name] = len(guiding_vars_categories)
 
@@ -913,10 +705,10 @@ class MOFAFLEX:
 
         init_tensor = self._initialize_factors(data)
 
-        svi, model, gp_warp_groups_order = self._setup_svi(
-            prior_scales,
+        covariates = datasets.get("gp_covariates")
+        svi, model = self._setup_svi(
             init_tensor,
-            covariates.covariates,
+            covariates.covariates if covariates else None,
             guiding_vars_factors,
             guiding_vars_n_categories,
             preprocessor.feature_means,
@@ -939,6 +731,7 @@ class MOFAFLEX:
                 (default_convert(dataset.__getitems__(sample_all_data_as_one_batch(data))),),
                 collate_fn_map=collate_fn_map,
             )
+            batchdata = batch.pop("data")
         else:
             loader = DataLoader(
                 dataset,
@@ -955,65 +748,78 @@ class MOFAFLEX:
         earlystopper = EarlyStopper(
             mode="min", min_delta=0.1, patience=self._train_opts.early_stopper_patience, percentage=True
         )
+        with self._train_opts.device:
+            for prior in chain(self._model_opts.factor_prior, self._model_opts.weight_prior):
+                prior.on_train_start()
+
         with tqdm(range(self._train_opts.max_epochs), unit="epochs", dynamic_ncols=True) as t:
             for i in t:
+                with self._train_opts.device, torch.inference_mode():
+                    for prior in chain(self._model_opts.factor_prior, self._model_opts.weight_prior):
+                        prior.on_train_epoch_start(i)
+
                 epoch_loss = 0
                 if singlebatch:
                     with self._train_opts.device:
-                        epoch_loss += svi.step(
-                            **batch["data"],
-                            covariates=batch["covariates"],
-                            guiding_vars=batch["guiding_vars"] if self.n_guided_factors > 0 else None,
-                        )
+                        epoch_loss += svi.step(**batchdata, **batch)
                 else:
                     for batch in loader:
                         batch = collate((batch,), collate_fn_map=collate_fn_map)
                         with self._train_opts.device:
-                            epoch_loss += svi.step(
-                                **batch["data"],
-                                covariates=batch["covariates"],
-                                guiding_vars=batch["guiding_vars"] if self.n_guided_factors > 0 else None,
-                            )
-                train_loss_elbo.append(epoch_loss)
-                if (
-                    self._gp is not None
-                    and len(self._gp_opts.warp_groups)
-                    and i > 0
-                    and not i % self._gp_opts.warp_interval
-                ):
-                    self._warp_covariates(covariates, model, gp_warp_groups_order)
+                            epoch_loss += svi.step(**batch.pop("data"), **batch)
 
+                with self._train_opts.device, torch.inference_mode():
+                    for prior in chain(self._model_opts.factor_prior, self._model_opts.weight_prior):
+                        prior.on_train_epoch_end(i)
+
+                train_loss_elbo.append(epoch_loss)
                 t.set_postfix({"Loss": epoch_loss}, refresh=False)
 
                 if earlystopper.step(epoch_loss):
                     _logger.info(f"Training converged after {i} epochs.")
                     break
-        if isinstance(t, tqdm_notebook):  # https://github.com/tqdm/tqdm/issues/1659
-            t.container.children[1].bar_style = "success"
 
-        self._post_fit(data, preprocessor, covariates, model, train_loss_elbo)
+            if isinstance(t, tqdm_notebook):  # https://github.com/tqdm/tqdm/issues/1659
+                t.container.children[1].bar_style = "success"
 
-    def _warp_covariates(self, covariates, model, warp_groups_order):
-        factormeans = model.get_factors().mean
-        refgroup = self._gp_opts.warp_reference_group
-        reffactormeans = factormeans[refgroup].mean(axis=0)
-        refidx = warp_groups_order[refgroup]
-        for g in self._gp_opts.warp_groups[1:]:
-            idx = warp_groups_order[g]
-            alignment = dtw(
-                reffactormeans[refidx],
-                factormeans[g][:, idx].mean(axis=0),
-                open_begin=self._gp_opts.warp_open_begin,
-                open_end=self._gp_opts.warp_open_end,
-                step_pattern="asymmetric",
-            )
-            covariates.covariates[g] = self._orig_covariates[g].copy()
-            covariates.covariates[g][idx[alignment.index2], 0] = self._orig_covariates[refgroup][
-                refidx[alignment.index1], 0
-            ]
-        self._gp.update_inducing_points(covariates.covariates.values())
+            self._post_fit(data, preprocessor, covariates, model, train_loss_elbo)
 
-    def _sort_factors(self, data, weights, factors, subsample=1000):
+            with self._train_opts.device, torch.inference_mode():
+                for prior in chain(self._model_opts.factor_prior, self._model_opts.weight_prior):
+                    if prior.axis == 0:
+                        kwargs = {
+                            "results": self._factors,
+                            "results_nonnegative": self._model_opts.nonnegative_factors,
+                            "nonfactor_names": self.sample_names,
+                        }
+                    else:
+                        kwargs = {
+                            "results": self._weights,
+                            "results_nonnegative": self._model_opts.nonnegative_weights,
+                            "nonfactor_names": self.feature_names,
+                        }
+                    prior.on_train_end(
+                        data, factor_names=self.factor_names, batch_size=self._train_opts.batch_size, **kwargs
+                    )
+
+        self._df_r2_full, self._df_r2_factors, self._factor_order = self._sort_factors(
+            data,
+            factors=self._get_postprocessed_factors(moment="mean", sparse_type="mix", ordered=False),
+            weights=self._get_postprocessed_weights(moment="mean", sparse_type="mix", ordered=False),
+        )
+
+        if self._train_opts.save_path is not False:
+            if self._train_opts.save_path is None:
+                self._train_opts.save_path = f"mofaflex_{time.strftime('%Y%m%d_%H%M%S')}.h5"
+            else:
+                self._train_opts.save_path = str(self._train_opts.save_path)
+            _logger.info(f"Saving results to {self._train_opts.save_path}...")
+            Path(self._train_opts.save_path).parent.mkdir(parents=True, exist_ok=True)
+            self._save(self._train_opts.save_path, self._train_opts.mofa_compat, data, preprocessor.feature_means)
+
+        self._init_api()
+
+    def _sort_factors(self, data, factors, weights, subsample=1000):
         # Loop over all groups
         dfs_factors, dfs_full = {}, {}
 
@@ -1037,7 +843,7 @@ class MOFAFLEX:
                         factors[group_name], group_name, view_name, align_to="samples", axis=0
                     )[sample_idx, :],
                     weights=align_global_array_to_local(  # noqa F821
-                        weights[view_name], group_name, view_name, align_to="features", axis=1
+                        weights[view_name], group_name, view_name, align_to="features", axis=0
                     ),
                     dispersions=dispersions,
                     sample_means=align_global_array_to_local(  # noqa F821
@@ -1079,74 +885,35 @@ class MOFAFLEX:
 
         return dfs_full, dfs_factors, factor_order
 
-    def _get_component(self, component, return_type="pandas"):
-        match return_type:
-            case "numpy":
-                return {k: v.to_numpy() for k, v in component.items()}
-            case "pandas":
-                return component
-            case "torch":
-                return {k: torch.tensor(v.values, dtype=torch.float).clone().detach() for k, v in component.items()}
-            case "anndata":
-                return {k: AnnData(v) for k, v in component.items()}
+    def _get_postprocessed_factors(self, moment: Literal["mean", "std"] = "mean", **kwargs) -> dict[str, np.ndarray]:
+        factors = {}
+        for prior in self._model_opts.factor_prior:
+            factors.update(prior.postprocess_results(self._factors, moment=moment, **kwargs))
+        return factors
 
-    def _get_sparse(self, what, moment, sparse_type):
-        ret = {}
-        probs = getattr(self, f"_sparse_{what}_probabilities")
-        vals = getattr(self, "_" + what)
-        precs = getattr(self, f"_sparse_{what}_precisions")
-        for name, cvals in getattr(vals, moment).items():
-            if name in probs:
-                if sparse_type == "mix":
-                    if moment == "mean":
-                        cvals = cvals * probs[name]
-                    else:
-                        p = probs[name]
-                        a = precs.mean[name][:, None]
-                        cvals = np.sqrt(vals.mean[name] ** 2 * p * (1 - p) + p * cvals**2 + (1 - p) / a**2)
-                elif sparse_type == "thresh":
-                    if moment == "mean":
-                        cvals = cvals * (vals[name].mean >= 0.5)
-                    else:
-                        cvals = 1 / precs.mean[name]
-            ret[name] = cvals
-        return ret
-
-    def get_factors(
+    def get_factors(  # noqa: D417
         self,
-        return_type: Literal["pandas", "anndata", "numpy"] = "pandas",
         moment: Literal["mean", "std"] = "mean",
-        sparse_type: Literal["raw", "mix", "thresh"] = "mix",
         ordered: bool = False,
-    ) -> _ResultsTypeDF:
+        return_type: Literal["pandas", "anndata"] = "pandas",
+        **kwargs,
+    ) -> dict[str, pd.DataFrame | AnnData]:
         """Get the factor matrices Z for each group.
 
         Args:
-             return_type: Format of the returned object.
-             moment: Which moment of the posterior distribution to return.
-             sparse_type: How to handle sparsity when using the spike and slab prior.
-
-                 - raw: Do nothing, return inferred values for all entries.
-                 - mix: Return the corresponding moment of a mixture distribution of two
-                   Normal distributions: One centered at 0 and the other centered at the
-                   inferred non-sparse value. The mixture is weighted by the inferred
-                   sparsity probability. This is what MOFA does.
-                 - thresh: Set all values with a sparsity probablity > 0.5 to 0.
-
-             ordered: Whether to return the factors ordered by explained variance (highest to lowest).
+            moment: Which moment of the posterior distribution to return.
+            ordered: Whether to return the factors ordered by explained variance (highest to lowest).
+            return_type: Format of the returned object.
         """
-        factors = {
-            group_name: pd.DataFrame(
-                group_factors.T, index=self.sample_names[group_name], columns=self.factor_names
-            ).iloc[:, self.factor_order if ordered else slice(None)]
-            for group_name, group_factors in self._get_sparse("factors", moment, sparse_type).items()
-        }
-        factors = self._get_component(factors, return_type)
+        factors = self._get_postprocessed_factors(moment, **kwargs)
+        factors = self._results_to_df(factors, axis=0, ordered=ordered)
 
         if return_type == "anndata":
-            for group_name, group_adata in factors.items():
+            for group_name, group_factors in factors.items():
+                group_adata = AnnData(group_factors)
                 group_adata.obs = pd.concat(self._metadata[group_name].values(), axis=1)
                 group_adata.obs = group_adata.obs.loc[:, ~group_adata.obs.columns.duplicated()]
+                factors[group_name] = group_adata
 
         return factors
 
@@ -1154,12 +921,12 @@ class MOFAFLEX:
         """Get the fraction of explained variance for each view and group.
 
         Args:
-             total: If `True`, returns a DataFrame with fraction of explained variance for the full
-                 model for each group (columns) and view (rows). Otherwise returns a dict with group
-                 names as keys containing DataFrames with the fraction of explained variance for each
-                 view (columns) and factor(rows).
-             ordered: Whether to return the factors ordered by explained variance (highest to lowest).
-                 Has no effect if `total == True`.
+            total: If `True`, returns a DataFrame with fraction of explained variance for the full
+                model for each group (columns) and view (rows). Otherwise returns a dict with group
+                names as keys containing DataFrames with the fraction of explained variance for each
+                view (columns) and factor(rows).
+            ordered: Whether to return the factors ordered by explained variance (highest to lowest).
+                Has no effect if `total == True`.
         """
         if total:
             return self._df_r2_full
@@ -1169,181 +936,37 @@ class MOFAFLEX:
                 for group_name, df in self._df_r2_factors.items()
             }
 
-    def get_significant_factor_annotations(self) -> dict[str, pd.DataFrame] | None:
-        """Get the results of significance testing of annotations against factors.
+    def _get_postprocessed_weights(self, moment: Literal["mean", "std"] = "mean", **kwargs) -> dict[str, np.ndarray]:
+        weights = {}
+        for prior in self._model_opts.weight_prior:
+            weights.update(prior.postprocess_results(self._weights, moment=moment, **kwargs))
+        return weights
 
-        The significance testing is an implementation of PCGSE :cite:p:`pmid26300978`. While
-        originally intended to assign annotations to uninformed factors, here it is used
-        as a diagnostic plot to find factors that are mismatched to their annotations.
-
-        Returns:
-            PCGSE results for each view or `None` if the model does not have prior annotations.
-        """
-        return self._pcgse
-
-    def get_weights(
-        self,
-        return_type: Literal["pandas", "anndata", "numpy"] = "pandas",
-        moment: Literal["mean", "std"] = "mean",
-        sparse_type: Literal["raw", "mix", "thresh"] = "mix",
-        ordered: bool = False,
-    ) -> _ResultsTypeDF:
+    def get_weights(  # noqa: D417
+        self, moment: Literal["mean", "std"] = "mean", ordered: bool = False, **kwargs
+    ) -> dict[str, pd.DataFrame]:
         """Get the weight matrices W for each view.
 
         Args:
-             return_type: Format of the returned object.
-             moment: Which moment of the posterior distribution to return.
-             sparse_type: How to handle sparsity when using the spike and slab prior.
-
-                 - raw: Do nothing, return inferred values for all entries.
-                 - mix: Return the corresponding moment of a mixture distribution of two
-                   Normal distributions: One centered at 0 and the other centered at the
-                   inferred non-sparse value. The mixture is weighted by the inferred
-                   sparsity probability. This is what MOFA does.
-                 - thresh: Set all values with a sparsity probablity > 0.5 to 0.
-
-             ordered: Whether to return the factors ordered by explained variance (highest to lowest).
+            return_type: Format of the returned object.
+            moment: Which moment of the posterior distribution to return.
+            ordered: Whether to return the factors ordered by explained variance (highest to lowest).
         """
-        weights = {
-            view_name: pd.DataFrame(view_weights, index=self.factor_names, columns=self.feature_names[view_name]).iloc[
-                self.factor_order if ordered else slice(None), :
-            ]
-            for view_name, view_weights in self._get_sparse("weights", moment, sparse_type).items()
-        }
+        weights = self._get_postprocessed_weights(moment, **kwargs)
+        weights = self._results_to_df(weights, axis=1, ordered=ordered)
 
-        return self._get_component(weights, return_type)
+        return weights
 
-    def get_sparse_factor_probabilities(
-        self, return_type: Literal["pandas", "anndata", "numpy"] = "pandas", ordered: bool = False
-    ) -> _ResultsTypeDF:
-        """Get the probabilties that a factor value is non-sparse for each group with a spike and slab factor prior.
-
-        Args:
-             return_type: Format of the returned object.
-             ordered: Whether to return the factors ordered by explained variance (highest to lowest).
-        """
-        probs = {
-            group_name: pd.DataFrame(group_prob.T, index=self.sample_names[group_name], columns=self.factor_names).iloc[
-                :, self.factor_order if ordered else slice(None)
-            ]
-            for group_name, group_prob in self._sparse_factors_probabilities.items()
-        }
-        return self._get_component(probs, return_type)
-
-    def get_sparse_weight_probabilities(
-        self, return_type: Literal["pandas", "anndata", "numpy"] = "pandas", ordered: bool = False
-    ) -> _ResultsTypeDF:
-        """Get the probabilties that a weight value is non-sparse for each view with a spike and slab view prior.
-
-        Args:
-             return_type: Format of the returned object.
-             ordered: Whether to return the factors ordered by explained variance (highest to lowest).
-        """
-        probs = {
-            view_name: pd.DataFrame(view_prob, index=self.factor_names, columns=self.feature_names[view_name]).iloc[
-                self.factor_order if ordered else slice(None), :
-            ]
-            for view_name, view_prob in self._sparse_weights_probabilities.items()
-        }
-        return self._get_component(probs, return_type)
-
-    def get_dispersion(
-        self, return_type: Literal["pandas", "anndata", "numpy"] = "pandas", moment: Literal["mean", "std"] = "mean"
-    ) -> _ResultsTypeSeries:
+    def get_dispersion(self, moment: Literal["mean", "std"] = "mean") -> dict[str, pd.Series]:
         """Get the dispersion vectors for each view.
 
         Args:
-             return_type: Format of the returned object.
-             moment: Which moment of the posterior distribution to return.
+            moment: Which moment of the posterior distribution to return.
         """
-        dispersion = {
+        return {
             view_name: pd.Series(view_dispersion, index=self.feature_names[view_name])
             for view_name, view_dispersion in getattr(self._dispersions, moment).items()
         }
-
-        return self._get_component(dispersion, return_type)
-
-    def get_gps(
-        self,
-        return_type: Literal["pandas", "anndata", "numpy"] = "pandas",
-        moment: Literal["mean", "std"] = "mean",
-        x: Mapping[str, np.ndarray | torch.Tensor] | None = None,
-        batch_size: int | None = None,
-        ordered: bool = False,
-    ) -> _ResultsTypeDF:
-        """Get all latent functions.
-
-        Args:
-             return_type: Format of the returned object.
-             moment: Which moment of the posterior distribution to return.
-             x: Covariate values for each group. If `None`, will return latent function values at
-                 covariate coordinates used for training.
-             batch_size: Minibatch size. Only has an effect if `x` is not `None`. Defaults to the
-                 minibatch size used for training.
-             ordered: Whether to return the factors ordered by explained variance (highest to lowest).
-        """
-        gps = getattr(self._gps if x is None else self._get_gps(x, batch_size), moment)
-        gps = {
-            group_name: pd.DataFrame(
-                group_f[self.factor_order if ordered else slice(None), :].T, columns=self.factor_names
-            )
-            for group_name, group_f in gps.items()
-        }
-
-        if x is None:
-            for gname, df in gps.items():
-                df.set_index(np.asarray(self.sample_names[gname]), inplace=True)
-
-        return self._get_component(gps, return_type)
-
-    def _get_gps(self, x: Mapping[str, np.ndarray | torch.Tensor], batch_size: int | None = None):
-        if batch_size is None:
-            batch_size = self._train_opts.batch_size
-        gps = MeanStd({}, {})
-        if self._gp is not None:
-            with (
-                torch.inference_mode(),
-                self._train_opts.device,
-            ):  # FIXME: allow user to run this in a `with device` context?
-                for group_idx, group_name in enumerate(self._gp_group_names):
-                    gidx = torch.as_tensor(group_idx)
-                    gdata = x[group_name]
-                    mean, std = [], []
-
-                    for start_idx in range(0, gdata.shape[0], batch_size):
-                        end_idx = min(start_idx + batch_size, gdata.shape[0])
-                        minibatch = gdata[start_idx:end_idx]
-
-                        gp_dist = self._gp(
-                            (gidx.expand(minibatch.shape[0], 1), torch.as_tensor(minibatch, dtype=torch.float32)),
-                            prior=False,
-                        )
-
-                        mean.append(gp_dist.mean.cpu().numpy())
-                        std.append(gp_dist.stddev.cpu().numpy())
-
-                    gps.mean[group_name] = np.concatenate(mean, axis=1)
-                    gps.std[group_name] = np.concatenate(std, axis=1)
-        return gps
-
-    def get_annotations(
-        self, return_type: Literal["pandas", "anndata", "numpy"] = "pandas", ordered=False
-    ) -> _ResultsTypeDF:
-        """Get the annotation matrices for each view.
-
-        Args:
-            return_type: Format of the returned object.
-            ordered: Whether to return the factors ordered by explained variance (highest to lowest).
-        """
-        informed_factors = slice(self.n_uninformed_factors, self.n_uninformed_factors + self.n_informed_factors)
-        annotations = {
-            k: pd.DataFrame(v, index=self.factor_names[informed_factors], columns=self.feature_names[k])
-            .astype(bool)
-            .iloc[np.argsort(np.argsort(self.factor_order[informed_factors])) if ordered else slice(None), :]
-            for k, v in self._annotations.items()
-        }
-
-        return self._get_component(annotations, return_type)
 
     def _setup_device(self, device):
         device = torch.device(device)
@@ -1373,17 +996,14 @@ class MOFAFLEX:
         """
         data = self._mofaflexdataset(data)
 
-        factors = self.get_factors(return_type="numpy")
-        weights = self.get_weights(return_type="numpy")
-
         return data.apply(
             impute,
             view_kwargs={
-                "weights": weights,
+                "weights": self._weights.mean,
                 "feature_names": self.feature_names,
                 "likelihood": self._model_opts.likelihoods,
             },
-            group_kwargs={"factors": factors, "sample_names": self.sample_names},
+            group_kwargs={"factors": self._factors.mean, "sample_names": self.sample_names},
             missingonly=missing_only,
             preprocessor=data.preprocessor,
         )
@@ -1398,47 +1018,37 @@ class MOFAFLEX:
         state = {
             "weights": self._weights._asdict(),
             "factors": self._factors._asdict(),
-            "covariates": self._covariates,
-            "covariates_names": self._covariates_names,
             "n_guiding_vars": self._n_guiding_vars,
             "df_r2_full": self._df_r2_full,
             "df_r2_factors": self._df_r2_factors,
-            "pcgse": self._pcgse,
-            "n_uninformed_factors": self._n_uninformed_factors,
-            "n_informed_factors": self._n_informed_factors,
+            "n_factors": self._n_factors,
             "factor_names": self._factor_names,
             "factor_order": self._factor_order,
-            "sparse_factors_probabilities": self._sparse_factors_probabilities,
-            "sparse_weights_probabilities": self._sparse_weights_probabilities,
-            "sparse_factors_precisions": self._sparse_factors_precisions._asdict(),
-            "sparse_weights_precisions": self._sparse_weights_precisions._asdict(),
-            "gps": self._gps._asdict(),
             "dispersions": self._dispersions._asdict(),
             "train_loss_elbo": self._train_loss_elbo,
             "group_names": self._group_names,
             "view_names": self._view_names,
             "feature_names": self._feature_names,
             "sample_names": self._sample_names,
-            "annotations": self._annotations,
             "metadata": self._metadata,
-            "data_opts": asdict(self._data_opts),
-            "model_opts": asdict(self._model_opts),
-            "train_opts": asdict(self._train_opts),
-            "gp_opts": asdict(self._gp_opts),
+            "data_opts": self._data_opts.asdict(),
+            "model_opts": self._model_opts.asdict(),
+            "train_opts": self._train_opts.asdict(),
+            "gp_opts": self._gp_opts.asdict(),
             "preprocessor_state": self._preprocessor_state,
         }
         state["train_opts"]["device"] = str(state["train_opts"]["device"])
         state["model_opts"]["likelihoods"] = {
             view_name: str(likelihood) for view_name, likelihood in state["model_opts"]["likelihoods"].items()
         }
-        if hasattr(self, "_orig_covariates"):
-            state["orig_covariates"] = self._orig_covariates
+        state["model_opts"]["factor_prior"] = {
+            str(i): prior.save() for i, prior in enumerate(state["model_opts"]["factor_prior"])
+        }
+        state["model_opts"]["weight_prior"] = {
+            str(i): prior.save() for i, prior in enumerate(state["model_opts"]["weight_prior"])
+        }
 
-        pickle = None
-        if self._gp is not None and self._gp_group_names is not None:
-            pickle = self._gp.state_dict()
-            state["gp_group_names"] = self._gp_group_names
-        save_model(state, pickle, path, mofa_compat, self, data, intercepts)
+        save_model(state, path, mofa_compat, self, data, intercepts)
 
     @classmethod
     def load(cls, path: str | Path, map_location=None) -> "MOFAFLEX":
@@ -1449,7 +1059,7 @@ class MOFAFLEX:
             map_location: Specify how to remap storage locations for PyTorch tensors. See the `torch.load`
                 documentation for details.
         """
-        state, pickle = load_model(path, map_location)
+        state = load_model(path)
 
         if map_location is not None:
             state["train_opts"]["device"] = map_location
@@ -1461,28 +1071,15 @@ class MOFAFLEX:
         model = cls.__new__(cls)
         model._weights = MeanStd(**state["weights"])
         model._factors = MeanStd(**state["factors"])
-        model._covariates = state.get("covariates")
-        if "orig_covariates" in state:
-            model._orig_covariates = state["orig_covariates"]
-        model._covariates_names = state.get("covariates_names")
         model._n_guiding_vars = state.get("n_guiding_vars")
         model._df_r2_full = state["df_r2_full"]
         model._df_r2_factors = state["df_r2_factors"]
-        model._pcgse = state.get("pcgse")
-        model._n_uninformed_factors = state["n_uninformed_factors"]
-        model._n_informed_factors = state["n_informed_factors"]
+        model._n_factors = state["n_factors"]
         model._factor_names = state["factor_names"]
         model._factor_order = state["factor_order"]
-        model._sparse_factors_probabilities = state["sparse_factors_probabilities"]
-        model._sparse_weights_probabilities = state["sparse_weights_probabilities"]
-        model._sparse_factors_precisions = MeanStd(**state["sparse_factors_precisions"])
-        model._sparse_weights_precisions = MeanStd(**state["sparse_weights_precisions"])
-        model._gps = MeanStd(**state["gps"])
         model._dispersions = MeanStd(**state["dispersions"])
         model._train_loss_elbo = state["train_loss_elbo"]
         model._group_names = state["group_names"]
-        if "gp_group_names" in state:
-            model._gp_group_names = state["gp_group_names"]
         model._view_names = state["view_names"]
         model._feature_names = state["feature_names"]
         model._sample_names = state["sample_names"]
@@ -1494,8 +1091,161 @@ class MOFAFLEX:
         model._gp_opts = SmoothOptions(**state["gp_opts"])
         model._preprocessor_state = state["preprocessor_state"]
 
-        model._setup_gp(full_setup=False)
-        if model._gp is not None and len(pickle):
-            model._gp.load_state_dict(pickle)
+        model._model_opts.factor_prior = [
+            Prior.load(state, model.n_total_factors, model.n_samples, map_location=map_location)
+            for state in model._model_opts.factor_prior.values()
+        ]
+        model._model_opts.weight_prior = [
+            Prior.load(state, model.n_total_factors, model.n_features, map_location=map_location)
+            for state in model._model_opts.weight_prior.values()
+        ]
+
+        model._prior_api_properties = {}
+        model._init_api()
 
         return model
+
+
+# init API for docs
+def _init_api():
+    def raise_(exc):
+        raise exc
+
+    def get_line_indentation(line: str):
+        for i, s in enumerate(line):
+            if not s.isspace():
+                return i
+        return np.inf
+
+    def get_indentation(docstring: str):
+        if not docstring:
+            return 0
+        lines = docstring.expandtabs(4).splitlines()
+        min_indent = np.inf
+        for line in lines[1:]:
+            min_indent = min(min_indent, get_line_indentation(line))
+        return min_indent if np.isfinite(min_indent) else 0
+
+    def make_dummy_function(name: str, prior: str, is_property: bool):
+        if is_property:
+            return lambda self: raise_(
+                AttributeError(
+                    f"The '{name}' property is only available when using the '{prior}' prior.", obj=self, name=name
+                )
+            )
+        else:
+            return lambda self, *args, **kwargs: raise_(
+                AttributeError(
+                    f"The '{name}' method is only available when using the '{prior}' prior.", obj=self, name=name
+                )
+            )
+
+    apinames: dict[tuple[int, str, str], str] = {}
+
+    getters = MOFAFLEX.get_factors, MOFAFLEX.get_weights
+    getter_sigs = tuple(inspect.signature(getter) for getter in getters)
+    getter_params = tuple([param for param in sig.parameters.values() if param.name != "kwargs"] for sig in getter_sigs)
+    getter_annots = tuple(getter.__annotations__ for getter in getters)
+    getter_docs = [getter.__doc__ for getter in getters]
+    getter_indents = [" " * get_indentation(doc) for doc in getter_docs]
+
+    for axis, axisname, priors in (
+        (0, "factor", Prior.known_factor_priors()),
+        (1, "weight", Prior.known_weight_priors()),
+    ):
+        namescount = Counter()
+        for api in chain(*(Prior.class_(x).api() for x in priors)):
+            namescount[api.name] += 1
+        duplicates = {k for k, v in namescount.items() if v > 1}
+
+        for prior in priors:
+            priorcls = Prior.class_(prior)
+            for api in priorcls.api():
+                name = api.name if api.name not in duplicates else f"{api.name}_{prior}"
+                name = name.replace("a̲x̲i̲s̲", axisname)
+                if api.type == APIType.property and api.has_factors:
+                    name = f"get_{name}"
+                apinames[(axis, prior, api.name)] = name
+
+                if api.type == APIType.property and not api.has_factors:
+                    attr = property(make_dummy_function(name, prior, True))
+                    attr.__doc__ = (
+                        getattr(priorcls, api.name).__doc__ + "\n\n.. important::\n"
+                        f"   This property is only available when using the {prior} prior."
+                    )
+                    setattr(MOFAFLEX, name, attr)
+                    continue
+
+                func = getattr(priorcls, api.name)
+                if api.type == APIType.property:
+                    func = func.fget
+                doc = func.__doc__
+                sig = inspect.signature(func)
+                params = list(sig.parameters.values())
+                annots = func.__annotations__.copy()
+                wrapperfunc = make_dummy_function(name, prior, False)
+                if not api.has_factors:
+                    wrapperfunc.__doc__ = doc
+                else:
+                    if doc is not None:
+                        doc += "\n\n"
+                    else:
+                        doc = ""
+                    indent = " " * get_indentation(doc)
+                    wrapperfunc.__doc__ = (
+                        doc + f"{indent}Args:\n"
+                        f"{indent}    ordered: Whether to return the factors ordered by explained variance (highest to lowest).\n\n"
+                        f"{indent}.. important::\n"
+                        f"{indent}   This method is only available when using the `{prior}` prior."
+                    )
+                    params.append(
+                        inspect.Parameter(
+                            "ordered", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=False, annotation=bool
+                        )
+                    )
+                    annots["ordered"] = bool
+                    wrapperfunc.__signature__ = sig.replace(parameters=params)
+                    wrapperfunc.__annotations__ = annots
+                    wrapperfunc.__qualname__ = f"{MOFAFLEX.__qualname__}.{name}"
+                    wrapperfunc.__name__ = name
+                setattr(MOFAFLEX, name, wrapperfunc)
+
+                postprocess_method = priorcls.postprocess_results
+                params = [
+                    param
+                    for param in inspect.signature(postprocess_method).parameters.values()
+                    if param.name not in {"self", "results", "moment", "kwargs"}
+                ]
+                getter_params[axis].extend(params)
+                for param in params:
+                    getter_annots[axis][param.name] = param.annotation
+                if doc := postprocess_method.__doc__:
+                    docindent = get_indentation(doc)
+                    lines = doc.expandtabs(4).splitlines()
+                    lines[0] = getter_indents[axis] + "Args:"
+                    for i, line in enumerate(lines[1:]):
+                        lines[i + 1] = getter_indents[axis] + "    " + line[docindent:]
+                    doc = "\n".join(lines)
+                    getter_docs[axis] += (
+                        "\n"
+                        + doc
+                        + f"\n{getter_indents[axis]}        .. important::\n{getter_indents[axis]}           This argument is only available when using the `{prior}` prior."
+                    )
+
+    # can't move this inside the loop due to Python's late binding closures
+    getter_wrappers = (
+        lambda self, *args, **kwargs: getters[0](self, *args, **kwargs),
+        lambda self, *args, **kwargs: getters[1](self, *args, **kwargs),
+    )
+    for axis, (method, wrapper) in enumerate(zip(getters, getter_wrappers, strict=True)):
+        wrapper.__signature__ = getter_sigs[axis].replace(parameters=getter_params[axis])
+        wrapper.__annotations__ = getter_annots[axis]
+        wrapper.__doc__ = getter_docs[axis]
+        wrapper.__qualname__ = method.__qualname__
+        wrapper.__name__ = method.__name__
+        setattr(MOFAFLEX, method.__name__, wrapper)
+
+    return apinames
+
+
+_apinames = _init_api()

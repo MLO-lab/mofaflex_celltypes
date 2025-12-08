@@ -11,7 +11,6 @@ from anndata import AnnData
 from mizani import bounds
 from mizani.palettes import brewer_pal
 from mudata import MuData
-from numpy.typing import NDArray
 
 from .. import tl
 
@@ -420,7 +419,7 @@ def factor_significance(
         alpha: False discovery rate threshold.
         figsize: Figure size in inches.
     """
-    pcgse_results = model.get_significant_factor_annotations()
+    pcgse_results = model.get_significant_annotations()
     if pcgse_results is None:
         raise ValueError("PCGSE results not available.")
 
@@ -459,7 +458,7 @@ def factor_significance(
             )
             view_pcgse.loc[view_pcgse["padj"] > alpha, "sign"] = pd.NA
 
-            view_pcgse["annotation_size"] = annotations[view_name].sum(axis=1)
+            view_pcgse["annotation_size"] = annotations[view_name].sum(axis=0)
             view_pcgse["factor"] = view_pcgse["factor"] + view_pcgse["sign"].map(
                 {"pos": " (+)", "neg": " (-)", pd.NA: ""}
             )
@@ -524,8 +523,8 @@ def all_weights(
     dfs = []
     for k, df in weights.items():
         if views is None or k in views:
-            df.reset_index(names="factor", inplace=True)
-            df = df.melt("factor", var_name="feature", value_name="weight")
+            df.reset_index(names="feature", inplace=True)
+            df = df.melt("feature", var_name="factor", value_name="weight")
             df["view"] = k
             dfs.append(df)
 
@@ -594,9 +593,9 @@ def factor(
     return plt
 
 
-def _check_covariate(cov, cnames, group_name, covars):
+def _check_covariate(cov, group_name, covars):
     if isinstance(cov, str):
-        covidx = np.nonzero(cnames == cov)[0]
+        covidx = np.nonzero(covars.columns == cov)[0]
         if not covidx.size:
             raise ValueError(f"Covariate `{cov}` not found in group `{group_name}`.")
         elif covidx.size > 1:
@@ -633,7 +632,6 @@ def _plot_factors_covariate(
         figsize = (2 * model.n_factors, 2 * len(factors))
 
     covariates = model.covariates
-    covariate_names = model.covariates_names
 
     df = []
     covnames = [covariate1, covariate2]
@@ -653,13 +651,12 @@ def _plot_factors_covariate(
         ylab = "Factor value"
 
     for group_name, covars in covariates.items():
-        cnames = covariate_names.get(group_name, ())
-        covidxs = tuple(_check_covariate(cov, cnames, group_name, covars) for cov in covcheck)
+        covidxs = tuple(_check_covariate(cov, group_name, covars) for cov in covcheck)
 
-        cdf = factors[group_name].reset_index(names="sample").assign(cov1=covars[:, covidxs[0]], group=group_name)
+        cdf = factors[group_name].assign(cov1=covars.iloc[:, covidxs[0]], group=group_name)
         if len(covidxs) > 1:
-            cdf = cdf.assign(cov2=covars[:, covidxs[1]])
-        df.append(cdf)
+            cdf = cdf.assign(cov2=covars.iloc[:, covidxs[1]])
+        df.append(cdf.reset_index(names="sample"))
 
     df = (
         pd.concat(df, axis=0, ignore_index=True)
@@ -728,7 +725,7 @@ def gp_covariate(
     elif covdim[0] > 2:
         raise NotImplementedError("Cannot plot covariates with >2 dimensions.")
 
-    covnames = [np.asarray(tuple(n[i] for n in model.covariates_names.values())) for i in range(covdim[0])]
+    covnames = [np.asarray(tuple(covar.columns[i] for covar in covariates.values())) for i in range(covdim[0])]
     for i in range(covdim[0]):
         if covnames[i].size == 0:
             covnames[i] = f"Covariate {i}"
@@ -747,15 +744,15 @@ def gp_covariate(
     gp_stds = model.get_gps(moment="std")
 
     if figsize is None:
-        figsize = (2 * model.n_factors, 2 * len(gp_means))
+        figsize = (2 * model.n_total_factors, 2 * len(gp_means))
 
     df = []
 
     for group_name, covars in covariates.items():
         cdf_mean = (
             gp_means[group_name]
+            .assign(cov=covars.iloc[:, 0])
             .reset_index(names="sample")
-            .assign(cov=covars[:, 0])
             .melt(id_vars=["sample", "cov"], var_name="factor", value_name="mean")
         )
         cdf_std = (
@@ -819,13 +816,16 @@ def _prepare_weights_df(
     factors: int | str | Sequence[int] | Sequence[str] | None = None,
 ):
     weights = model.get_weights(ordered=False)
-    annotations = model.get_annotations(ordered=False)
+    try:
+        annotations = model.get_annotations(ordered=False)
+    except AttributeError:
+        annotations = {}
     if views is None:
         views = model.view_names
     elif isinstance(views, str):
         views = [views]
     if factors is None:
-        factors = np.arange(model.n_factors)
+        factors = np.arange(model.n_total_factors)
     else:
         if not isinstance(factors, Sequence) or isinstance(factors, str):
             factors = (factors,)
@@ -839,16 +839,16 @@ def _prepare_weights_df(
     for view in views:
         cdf = (
             weights[view]
-            .iloc[factors, :]
-            .reset_index(names="factor")
-            .melt(id_vars="factor", var_name="feature", value_name="weight")
+            .iloc[:, factors]
+            .reset_index(names="feature")
+            .melt(id_vars="feature", var_name="factor", value_name="weight")
         )
         if view in annotations:
             cdf = pd.merge(
                 cdf,
                 annotations[view]
-                .reset_index(names="factor")
-                .melt(id_vars="factor", var_name="feature", value_name="annotation"),
+                .reset_index(names="feature")
+                .melt(id_vars="feature", var_name="factor", value_name="annotation"),
                 how="left",
                 on=["factor", "feature"],
             )
@@ -1019,11 +1019,11 @@ def weights(
 
 
 def _plot_sparse_probabilities_histogram(
-    probs: dict[NDArray], bins: int = 50, nrow: int | None = None, ncol: int | None = None
+    probs: dict[str, pd.DataFrame], bins: int = 50, nrow: int | None = None, ncol: int | None = None
 ):
     df = []
-    for name, arr in probs.items():
-        df.append(pd.DataFrame({"key": name, "prob": arr.reshape(-1)}))
+    for name, cdf in probs.items():
+        df.append(pd.DataFrame({"key": name, "prob": cdf.to_numpy().reshape(-1)}))
     df = pd.concat(df, axis=0, ignore_index=True)
     plot = (
         p9.ggplot(df, p9.aes("prob"))
@@ -1050,7 +1050,7 @@ def weight_sparsity_histogram(model: MOFAFLEX, bins: int = 50, nrow: int | None 
         ncol: Number of columns in the faceted plot. If None, plotnine will determine automatically.
     """
     return _plot_sparse_probabilities_histogram(
-        model.get_sparse_weight_probabilities("numpy"), bins=bins, nrow=nrow, ncol=ncol
+        model.get_sparse_weight_probabilities(), bins=bins, nrow=nrow, ncol=ncol
     )
 
 
@@ -1068,5 +1068,5 @@ def factor_sparsity_histogram(model: MOFAFLEX, bins: int = 50, nrow: int | None 
         ncol: Number of columns in the faceted plot. If None, plotnine will determine automatically.
     """
     return _plot_sparse_probabilities_histogram(
-        model.get_sparse_factor_probabilities("numpy"), bins=bins, nrow=nrow, ncol=ncol
+        model.get_sparse_factor_probabilities(), bins=bins, nrow=nrow, ncol=ncol
     )

@@ -1,8 +1,11 @@
 from collections import namedtuple
+from dataclasses import MISSING, dataclass, fields
+from io import BytesIO
 from typing import Literal, TypeAlias
 
 import numpy as np
 import pandas as pd
+import torch
 from anndata import AnnData
 from numpy.typing import NDArray
 from scipy.sparse import (
@@ -25,6 +28,61 @@ PossiblySparseArray: TypeAlias = NDArray | spmatrix | sparray
 
 MeanStd = namedtuple("MeanStd", ["mean", "std"])
 ShapeRate = namedtuple("ShapeRate", ["shape", "rate"])
+
+
+@dataclass(kw_only=True)
+class Options:
+    def __or__(self, other):
+        if self.__class__ is not other.__class__:
+            raise TypeError("Can only merge objects of the same type")
+
+        kwargs = self.asdict()
+        for f in fields(other):
+            val = getattr(other, f.name)
+            if (
+                f.default is not MISSING
+                and val != f.default
+                or f.default_factory is not MISSING
+                and val != f.default_factory()
+            ):
+                kwargs[f.name] = val
+        return self.__class__(**kwargs)
+
+    def __ior__(self, other):
+        if self.__class__ is not other.__class__:
+            raise TypeError("Can only merge objects of the same type")
+
+        for f in fields(other):
+            val = getattr(other, f.name)
+            if (
+                f.default is not MISSING
+                and val != f.default
+                or f.default_factory is not MISSING
+                and val != f.default_factory()
+            ):
+                setattr(self, f.name, val)
+        return self
+
+    def asdict(self):
+        # avoid the deepcopy done by dataclasses.asdict
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    def __post_init__(self):
+        # after an HDF5 roundtrip, these are numpy scalars, which PyTorch doesn't handle well'
+        for f in fields(self):
+            if f.type in (float, int, bool):
+                setattr(self, f.name, f.type(getattr(self, f.name)))
+
+
+def pickle_torch_state(state: dict) -> NDArray[np.uint8]:
+    pkl = BytesIO()
+    torch.save(state, pkl)
+    return np.frombuffer(pkl.getbuffer(), dtype=np.uint8)
+
+
+def unpickle_torch_state(state: NDArray[np.uint8], map_location=None):
+    pkl = BytesIO(state.tobytes())
+    return torch.load(pkl, map_location=map_location, weights_only=True)
 
 
 def sample_all_data_as_one_batch(data: MofaFlexDataset) -> dict[str, list[int]]:
@@ -196,7 +254,7 @@ def impute(
     missingonly,
     preprocessor,
 ):
-    havemissing = data.n_obs < factors.shape[0] or data.n_vars < weights.shape[1]
+    havemissing = data.n_obs < factors.shape[0] or data.n_vars < weights.shape[0]
     if issparse(data.X):
         have_missing_cells = np.isnan(data.X.data).sum() > 0
     else:
@@ -205,8 +263,9 @@ def impute(
 
     if missingonly and not havemissing:
         return data
-    elif not missingonly:
-        imputation = likelihood.transform_prediction(factors @ weights, preprocessor.sample_means)
+
+    if not missingonly:
+        imputation = likelihood.transform_prediction(factors @ weights.T, preprocessor.sample_means)
     else:
         missing_obs = align_local_array_to_global(  # noqa F821
             np.broadcast_to(False, (data.n_obs,)), group_name, view_name, fill_value=True, align_to="samples"
@@ -217,7 +276,7 @@ def impute(
 
         preprocessed = preprocessor(data.X, slice(None), slice(None), group_name, view_name)[0]
         if issparse(preprocessed):
-            imputation = lil_array((factors.shape[0], weights.shape[1]))
+            imputation = lil_array((factors.shape[0], weights.shape[0]))
         else:
             imputation = np.empty((sample_names.size, feature_names.size), dtype=data.X.dtype)
 
@@ -228,27 +287,27 @@ def impute(
         if issparse(data.X):
             for row in np.nonzero(missing_obs)[0]:
                 imputation[row, :] = likelihood.transform_prediction(
-                    factors[row, :] @ weights, preprocessor.sample_means
+                    factors[row, :] @ weights.T, preprocessor.sample_means
                 )
             imputation = imputation.T  # slow column slicing for lil arrays
             for col in np.nonzero(missing_var)[0]:
                 imputation[col, :] = likelihood.transform_prediction(
-                    factors @ weights[:, col], preprocessor.sample_means
+                    factors @ weights[col, :].T, preprocessor.sample_means
                 ).T
             imputation = imputation.T
         else:
             imputation[missing_obs, :] = likelihood.transform_prediction(
-                factors[missing_obs, :] @ weights, preprocessor.sample_means
+                factors[missing_obs, :] @ weights.T, preprocessor.sample_means
             )
             imputation[:, missing_var] = likelihood.transform_prediction(
-                factors @ weights[:, missing_var], preprocessor.sample_means
+                factors @ weights[missing_var, :].T, preprocessor.sample_means
             )
 
         if have_missing_cells:
             nanobs, nanvar = wherenan(data.X)
             nanobs, nanvar = np.atleast_1d(obsidx[nanobs]), np.atleast_1d(varidx[nanvar])
             imputation[nanobs, nanvar] = likelihood.transform_prediction(
-                (factors[nanobs, :] * weights[:, nanvar].T).sum(axis=1), preprocessor.sample_means
+                (factors[nanobs, :] * weights[nanvar, :]).sum(axis=1), preprocessor.sample_means
             )
 
         if issparse(data.X):

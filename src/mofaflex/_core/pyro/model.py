@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import pyro
@@ -11,7 +10,6 @@ from pyro.nn import PyroModule, PyroModuleList, PyroParam, pyro_method
 
 from ..utils import MeanStd
 from .likelihoods import PyroLikelihood
-from .priors import Prior
 from .utils import PyroModuleDict, PyroParameterDict
 
 if TYPE_CHECKING:
@@ -20,7 +18,6 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from ..gp import GP
     from ..likelihoods import Likelihood
     from .priors import FactorPriorType, WeightPriorType
 
@@ -36,15 +33,14 @@ class MofaFlexModel(PyroModule):
         guiding_vars_n_categories: Mapping[str, int] | None = None,
         guiding_vars_factors: Mapping[str, int] | None = None,
         guiding_vars_scales: Mapping[str, float] | None = None,
-        prior_scales=None,
         factor_prior: Mapping[str, FactorPriorType] | FactorPriorType = "Normal",
         weight_prior: Mapping[str, WeightPriorType] | WeightPriorType = "Normal",
         nonnegative_weights: Mapping[str, bool] | bool = False,
         nonnegative_factors: Mapping[str, bool] | bool = False,
         feature_means: Mapping[str, Mapping[str, NDArray]] = None,
         sample_means: Mapping[str, Mapping[str, NDArray]] = None,
-        gp: GP | None = None,
         factors_init_tensor: Mapping[str, Mapping[Literal["loc", "scale"], NDArray]] = None,
+        annotation_confidence: float = 0.99,
         init_loc: float = 0.0,
         init_scale: float = 0.1,
         init_prob: float = 0.5,
@@ -82,19 +78,13 @@ class MofaFlexModel(PyroModule):
         self._nonnegative_factors = nonnegative_factors
         self._pos_transform = torch.nn.ReLU()
 
-        factor_prior_groups = defaultdict(list)
-        for group_name, prior in factor_prior.items():
-            factor_prior_groups[prior].append(group_name)
         self._factors = PyroModuleList(
             [
-                Prior(
-                    prior,
-                    names=groups,
+                prior.pyro_prior(
                     factor_dim=-3,
                     nonfactor_dim=self._sample_plate_dim,
                     n_factors=n_factors,
                     n_nonfactors=n_samples,
-                    gp=gp,
                     init_tensor=factors_init_tensor,
                     init_loc=init_loc,
                     init_scale=init_scale,
@@ -104,23 +94,18 @@ class MofaFlexModel(PyroModule):
                     init_shape=init_shape,
                     init_rate=init_rate,
                 )
-                for prior, groups in factor_prior_groups.items()
+                for prior in factor_prior
             ]
         )
 
-        weight_prior_groups = defaultdict(list)
-        for view_name, prior in weight_prior.items():
-            weight_prior_groups[prior].append(view_name)
         self._weights = PyroModuleList(
             [
-                Prior(
-                    prior,
-                    names=views,
+                prior.pyro_prior(
                     factor_dim=-3,
                     nonfactor_dim=self._feature_plate_dim,
                     n_factors=n_factors,
                     n_nonfactors=n_features,
-                    prior_scales=prior_scales,
+                    annotation_confidence=annotation_confidence,
                     init_loc=init_loc,
                     init_scale=init_scale,
                     init_prob=init_prob,
@@ -129,7 +114,7 @@ class MofaFlexModel(PyroModule):
                     init_shape=init_shape,
                     init_rate=init_rate,
                 )
-                for prior, views in weight_prior_groups.items()
+                for prior in weight_prior
             ]
         )
 
@@ -285,7 +270,7 @@ class MofaFlexModel(PyroModule):
             )
 
     @pyro_method
-    def model(self, data, sample_idx, nonmissing_samples, nonmissing_features, covariates, guiding_vars):
+    def model(self, data, sample_idx, nonmissing_samples, nonmissing_features, guiding_vars=None, **kwargs):
         (
             sample_plates,
             feature_plates,
@@ -297,7 +282,7 @@ class MofaFlexModel(PyroModule):
 
         factors = {}
         for prior in self._factors:
-            factors.update(prior.model(factor_plate, sample_plates, covariates=covariates))
+            factors.update(prior.model(factor_plate, sample_plates, **kwargs))
 
         for group_name, group_factors in factors.items():
             if self._nonnegative_factors[group_name]:
@@ -367,7 +352,7 @@ class MofaFlexModel(PyroModule):
                 )
 
     @pyro_method
-    def guide(self, data, sample_idx, nonmissing_samples, nonmissing_features, covariates, guiding_vars):
+    def guide(self, data, sample_idx, nonmissing_samples, nonmissing_features, guiding_vars=None, **kwargs):
         (
             sample_plates,
             feature_plates,
@@ -378,7 +363,7 @@ class MofaFlexModel(PyroModule):
         ) = self._get_plates(subsample=sample_idx)
 
         for prior in self._factors:
-            prior.guide(factor_plate, sample_plates, covariates=covariates)
+            prior.guide(factor_plate, sample_plates, **kwargs)
 
         for prior in self._weights:
             prior.guide(factor_plate, feature_plates)
@@ -422,35 +407,10 @@ class MofaFlexModel(PyroModule):
         for group_name in self._group_names:
             if self._nonnegative_factors[group_name]:
                 factors.mean[group_name] = self._pos_transform(factors.mean[group_name])
-            factors.mean[group_name] = factors.mean[group_name].cpu().numpy()
-            factors.std[group_name] = factors.std[group_name].cpu().numpy()
+            factors.mean[group_name] = factors.mean[group_name].cpu().numpy().T
+            factors.std[group_name] = factors.std[group_name].cpu().numpy().T
 
         return factors
-
-    @torch.inference_mode()
-    def get_sparse_factor_precisions(self):
-        alphas = MeanStd({}, {})
-        for prior in self._factors:
-            try:
-                precisions = prior.posterior_precision
-            except AttributeError:
-                continue
-            for group_name in precisions.shape.keys():
-                d = dist.Gamma(concentration=precisions.shape[group_name], rate=precisions.rate[group_name])
-                alphas.mean[group_name] = d.mean.cpu().numpy()
-                alphas.std[group_name] = d.stddev.cpu().numpy()
-        return alphas
-
-    @torch.inference_mode()
-    def get_sparse_factor_probabilities(self):
-        probs = {}
-        for prior in self._factors:
-            try:
-                for group_name, prob in prior.posterior_probability.items():
-                    probs[group_name] = prob.cpu().numpy()
-            except AttributeError:
-                continue
-        return probs
 
     @torch.inference_mode()
     def get_weights(self):
@@ -463,35 +423,10 @@ class MofaFlexModel(PyroModule):
         for view_name in self._view_names:
             if self._nonnegative_weights[view_name]:
                 weights.mean[view_name] = self._pos_transform(weights.mean[view_name])
-            weights.mean[view_name] = weights.mean[view_name].cpu().numpy()
-            weights.std[view_name] = weights.std[view_name].cpu().numpy()
+            weights.mean[view_name] = weights.mean[view_name].cpu().numpy().T
+            weights.std[view_name] = weights.std[view_name].cpu().numpy().T
 
         return weights
-
-    @torch.inference_mode()
-    def get_sparse_weight_precisions(self):
-        alphas = MeanStd({}, {})
-        for prior in self._weights:
-            try:
-                precisions = prior.posterior_precision
-            except AttributeError:
-                continue
-            for view_name in precisions.shape.keys():
-                d = dist.Gamma(concentration=precisions.shape[view_name], rate=precisions.rate[view_name])
-                alphas.mean[view_name] = d.mean.cpu().numpy()
-                alphas.std[view_name] = d.stddev.cpu().numpy()
-        return alphas
-
-    @torch.inference_mode()
-    def get_sparse_weight_probabilities(self):
-        probs = {}
-        for prior in self._weights:
-            try:
-                for view_name, prob in prior.posterior_probability.items():
-                    probs[view_name] = prob.cpu().numpy()
-            except AttributeError:
-                continue
-        return probs
 
     @torch.inference_mode()
     def get_dispersion(self):

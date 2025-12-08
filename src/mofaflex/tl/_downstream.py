@@ -45,10 +45,10 @@ def test_annotation_significance(
     if data is not None and not isinstance(data, MofaFlexDataset):
         data = model._mofaflexdataset(data)
     annotations = {
-        view_name: annot.loc[:, features].astype(bool)
+        view_name: annot.loc[features, :].astype(bool)
         for view_name, annot in annotations.items()
         if view_name in model.view_names
-        and (features := annot.columns.intersection(model.feature_names[view_name])).size > 0
+        and (features := annot.index.intersection(model.feature_names[view_name])).size > 0
     }
 
     if len(annotations) > 0:
@@ -56,7 +56,7 @@ def test_annotation_significance(
             data,
             model._model_opts.nonnegative_weights,
             annotations,
-            model.get_weights("pandas"),
+            model.get_weights(),
             corr_adjust=corr_adjust,
             p_adj_method=p_adj_method,
             min_size=min_size,

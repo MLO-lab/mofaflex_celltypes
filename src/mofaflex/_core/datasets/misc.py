@@ -1,3 +1,5 @@
+from collections.abc import Mapping, Sequence
+
 import numpy as np
 import pandas as pd
 import torch
@@ -7,7 +9,7 @@ from torch.utils.data import BatchSampler, Dataset, RandomSampler, Sampler, Stac
 from .base import MofaFlexDataset
 
 
-class MofaFlexBatchSampler(Sampler[dict[str, list[int]]]):
+class MofaFlexBatchSampler(Sampler[Mapping[str, Sequence[int]]]):
     """A sampler for dicts.
 
     Given a dict with arbitrary keys and values indicating the number of data points in
@@ -17,7 +19,7 @@ class MofaFlexBatchSampler(Sampler[dict[str, list[int]]]):
     """
 
     def __init__(
-        self, n_samples: dict[str, int], batch_size: int, drop_last: bool = False, generator: torch.Generator = None
+        self, n_samples: Mapping[str, int], batch_size: int, drop_last: bool = False, generator: torch.Generator = None
     ):
         super().__init__()
         self._n_samples = n_samples
@@ -48,44 +50,56 @@ class MofaFlexBatchSampler(Sampler[dict[str, list[int]]]):
 
 class CovariatesDataset(Dataset):
     def __init__(
-        self, data: MofaFlexDataset, obs_key: dict[str, str] | None = None, obsm_key: dict[str, str] | None = None
+        self,
+        data: MofaFlexDataset,
+        obs_key: Mapping[str, str] | None = None,
+        obsm_key: Mapping[str, str] | None = None,
+        group_names: str | Sequence[str] | None = None,
     ):
         super().__init__()
 
-        covariates, self.covariates_names = data.get_covariates(0, obs_key, obsm_key)
+        if isinstance(group_names, str):
+            group_names = (group_names,)
+        covariates = data.get_covariates(0, obs_key, obsm_key)
+
+        if group_names is not None:
+            for group_name in list(covariates.keys()):
+                if group_name not in group_names:
+                    del covariates[group_name]
 
         # if data is categorical, get unique categories
-        categories = set()
+        categories = None
         for group_covars in covariates.values():
             for view_covars in group_covars.values():
-                if view_covars.dtype == np.object_:
-                    non_nan_values = view_covars[~pd.isnull(view_covars)]
-                    categories |= set(non_nan_values)
-
-        # map categories to floats
-        categories_mapping = {cat: i for i, cat in enumerate(sorted(categories))}
+                dtypes = view_covars.dtypes
+                if dtypes.nunique() > 1:
+                    raise ValueError("Mixed dtypes for a covariate are not supported.")
+                if dtypes.iloc[0] == "category":
+                    categories = (
+                        view_covars.iloc[0].cat.categories
+                        if categories is None
+                        else categories.union(view_covars.iloc[0].cat.categories)
+                    )
         for group_covars in covariates.values():
-            for view_name, view_covars in group_covars.items():
-                if view_covars.dtype == np.object_:
-                    view_covars_mapped = np.full_like(view_covars, fill_value=np.nan, dtype=np.float32)
-                    for k, v in categories_mapping.items():
-                        view_covars_mapped[view_covars == k] = v
-                    group_covars[view_name] = view_covars_mapped
+            for view_covars in group_covars.values():
+                if view_covars.dtypes.iloc[0] == "category":
+                    for col in view_covars.columns:
+                        view_covars[col] = view_covars[col].cat.set_categories(categories)
 
-        # ensure the a covariate value is consistent across views (nanmean or first)
+        # ensure the covariate value is consistent across views (nanmean or first)
         self.covariates = {}
         for group_name, group_covars in covariates.items():
-            group_covars_stacked = np.stack(tuple(group_covars.values()), axis=0)
-            if np.all(np.isnan(group_covars_stacked) | (group_covars_stacked == np.floor(group_covars_stacked))):
-                idx = np.isfinite(group_covars_stacked)
-                self.covariates[group_name] = np.where(
-                    np.any(idx, axis=0),
-                    np.take_along_axis(group_covars_stacked, np.argmax(idx, axis=0, keepdims=True), axis=0)[0, ...],
-                    np.nan,
-                )
-
+            group_covariates = pd.concat(group_covars, axis=0, names=["view", "sample"])
+            if (
+                group_covariates.dtypes.iloc[0] == "category"
+                or pd.api.types.is_integer_dtype(group_covariates.dtypes.iloc[0])
+                and np.all(group_covariates.iloc[:, 0] >= 0)
+            ):
+                cov = group_covariates.groupby("sample").first()
             else:
-                self.covariates[group_name] = np.nanmean(np.stack(tuple(group_covars.values()), axis=0), axis=0)
+                cov = group_covariates.groupby("sample").mean()
+            cov.rename_axis(index=None, inplace=True)
+            self.covariates[group_name] = cov
 
         self._n_samples = max(data.n_samples.values())
         self._cast_to = data.cast_to
@@ -94,21 +108,29 @@ class CovariatesDataset(Dataset):
         return self._n_samples
 
     def __getitem__(self, idx: dict[str, int | list[int]]) -> dict[str, NDArray]:
-        return {
-            group_name: self.covariates[group_name][group_idx, :].astype(self._cast_to)
-            for group_name, group_idx in idx.items()
-            if group_name in self.covariates
-        }
+        ret = {}
+        for group_name, group_idx in idx.items():
+            if group_name in self.covariates:
+                group = self.covariates[group_name].iloc[group_idx, :]
+                if group.dtypes.iloc[0] == "category":
+                    arr = np.stack(tuple(group[col].cat.codes.to_numpy() for col in group.columns), axis=1).astype(
+                        self._cast_to
+                    )
+                    arr[arr < 0] = np.nan
+                else:
+                    arr = group.to_numpy().astype(self._cast_to)
+                ret[group_name] = arr
+        return ret
 
     __getitems__ = __getitem__
 
 
 class StackDataset(StackDataset):
-    def __getitems__(self, idx: list | dict):
-        if isinstance(idx, list):
+    def __getitems__(self, idx: Sequence | Mapping):
+        if isinstance(idx, Sequence):
             return super().__getitems__(idx)
 
-        if isinstance(self.datasets, dict):
+        if isinstance(self.datasets, Mapping):
             return {k: self._get_items_from_dset(dataset, idx) for k, dataset in self.datasets.items()}
         else:
             return [self._get_items_from_dset(dataset, idx) for dataset in self.datasets]
@@ -122,7 +144,7 @@ class StackDataset(StackDataset):
 
 
 class GuidingVarsDataset(StackDataset):
-    def __init__(self, data: MofaFlexDataset, guiding_vars_obs_keys: dict[str, dict[str, str]] | None = None):
+    def __init__(self, data: MofaFlexDataset, guiding_vars_obs_keys: Mapping[str, Mapping[str, str]] | None = None):
         datasets = {}
         for guiding_var_name, obs_key in guiding_vars_obs_keys.items():
             datasets[guiding_var_name] = CovariatesDataset(data, obs_key=obs_key)
