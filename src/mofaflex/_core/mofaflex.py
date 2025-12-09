@@ -1210,12 +1210,13 @@ def _init_api():
                     wrapperfunc.__name__ = name
                 setattr(MOFAFLEX, name, wrapperfunc)
 
-                postprocess_method = priorcls.postprocess_results
-                params = [
-                    param
-                    for param in inspect.signature(postprocess_method).parameters.values()
-                    if param.name not in {"self", "results", "moment", "kwargs"}
-                ]
+            postprocess_method = priorcls.postprocess_results
+            params = [
+                param
+                for param in inspect.signature(postprocess_method).parameters.values()
+                if param.name not in {"self", "results", "moment", "kwargs"}
+            ]
+            if len(params) > 0:
                 getter_params[axis].extend(params)
                 for param in params:
                     getter_annots[axis][param.name] = param.annotation
