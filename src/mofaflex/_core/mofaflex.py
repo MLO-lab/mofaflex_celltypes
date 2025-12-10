@@ -29,10 +29,11 @@ from tqdm.notebook import tqdm_notebook
 
 from .. import pl
 from . import preprocessing
+from .api.priors import Prior as APIPrior
 from .datasets import GuidingVarsDataset, MofaFlexBatchSampler, MofaFlexDataset, StackDataset
 from .io import MOFACompatOption, load_model, save_model
 from .likelihoods import Likelihood, LikelihoodType
-from .priors import API, APIType, FactorPriorType, Prior, SmoothOptions, WeightPriorType
+from .priors import API, APIType, FactorPriorType, Prior, WeightPriorType
 from .pyro import MofaFlexModel
 from .training import EarlyStopper
 from .utils import MeanStd, Options, impute, sample_all_data_as_one_batch
@@ -63,15 +64,6 @@ class DataOptions(Options):
     scale_per_group: bool = True
     """Scale Normal likelihood data per group, otherwise across all groups."""
 
-    annotations_varm_key: Mapping[str, str] | str | None = None
-    """Key of .varm attribute of each AnnData object that contains annotation values."""
-
-    covariates_obs_key: Mapping[str, str] | str | None = None
-    """Key of .obs attribute of each :class:`AnnData<anndata.AnnData>` object that contains covariate values."""
-
-    covariates_obsm_key: Mapping[str, str] | str | None = None
-    """Key of .obsm attribute of each :class:`AnnData<anndata.AnnData>` object that contains covariate values."""
-
     guiding_vars_obs_keys: str | Sequence[str] | Mapping[str, Mapping[str, str]] | None = None
     """Keys of .obs attribute of each :class:`AnnData<anndata.AnnData>` object that contains guiding variable values."""
 
@@ -98,11 +90,11 @@ class ModelOptions(Options):
     n_factors: int = 0
     """Number of latent factors."""
 
-    weight_prior: Mapping[str, WeightPriorType] | WeightPriorType = "Normal"
-    """Weight priors for each view (if dict) or for all views (if str)."""
-
-    factor_prior: Mapping[str, FactorPriorType] | FactorPriorType = "Normal"
+    factor_prior: Mapping[str | Sequence[str], FactorPriorType | APIPrior] | FactorPriorType | APIPrior = "Normal"
     """Factor priors for each group (if dict) or for all groups (if str)."""
+
+    weight_prior: Mapping[str | Sequence[str], WeightPriorType | APIPrior] | WeightPriorType | APIPrior = "Normal"
+    """Weight priors for each view (if dict) or for all views (if str)."""
 
     likelihoods: Mapping[str, LikelihoodType] | LikelihoodType | None = None
     """Data likelihoods for each view (if dict) or for all views (if str). Inferred automatically if None."""
@@ -569,7 +561,6 @@ class MOFAFLEX:
         self._data_opts = DataOptions()
         self._model_opts = ModelOptions()
         self._train_opts = TrainingOptions()
-        self._gp_opts = SmoothOptions()
 
         for arg in args:
             match arg:
@@ -579,8 +570,6 @@ class MOFAFLEX:
                     self._model_opts |= arg
                 case TrainingOptions():
                     self._train_opts |= arg
-                case SmoothOptions():
-                    self._gp_opts |= arg
 
         if self._train_opts.seed is not None:
             try:
@@ -607,63 +596,41 @@ class MOFAFLEX:
             guiding_vars_names = ()
 
         for opt_name, keys in zip(
-            (
-                "weight_prior",
-                "factor_prior",
-                "nonnegative_weights",
-                "nonnegative_factors",
-                "guiding_vars_likelihoods",
-                "guiding_vars_scales",
-            ),
-            (
-                data.view_names,
-                data.group_names,
-                data.view_names,
-                data.group_names,
-                guiding_vars_names,
-                guiding_vars_names,
-            ),
+            ("nonnegative_weights", "nonnegative_factors", "guiding_vars_likelihoods", "guiding_vars_scales"),
+            (data.view_names, data.group_names, guiding_vars_names, guiding_vars_names),
             strict=True,
         ):
             val = getattr(self._model_opts, opt_name)
             if not isinstance(val, dict):
                 setattr(self._model_opts, opt_name, dict.fromkeys(keys, val))
 
-        for opt_name, keys in zip(
-            ("covariates_obs_key", "covariates_obsm_key", "annotations_varm_key"),
-            (data.group_names, data.group_names, data.view_names),
-            strict=True,
-        ):
-            val = getattr(self._data_opts, opt_name)
-            if isinstance(val, str):
-                setattr(self._data_opts, opt_name, dict.fromkeys(keys, val))
-
         self._train_opts.device = self._setup_device(self._train_opts.device)
         if self._train_opts.batch_size is None or not (0 < self._train_opts.batch_size <= data.n_samples_total):
             self._train_opts.batch_size = data.n_samples_total
 
-        factor_prior_groups = defaultdict(list)
-        for group_name, prior in self._model_opts.factor_prior.items():
-            factor_prior_groups[prior].append(group_name)
-        self._model_opts.factor_prior = []
-        for priorname, gnames in factor_prior_groups.items():
-            prior = Prior(
-                priorname,
-                axis=0,
-                names=gnames,
-                covariates_obs_key=self._data_opts.covariates_obs_key,
-                covariates_obsm_key=self._data_opts.covariates_obsm_key,
-                options=self._gp_opts,
-            )
-            self._model_opts.factor_prior.append(prior)
-
-        weight_prior_groups = defaultdict(list)
-        for view_name, prior in self._model_opts.weight_prior.items():
-            weight_prior_groups[prior].append(view_name)
-        self._model_opts.weight_prior = [
-            Prior(prior, axis=1, names=gnames, annotations_varm_key=self._data_opts.annotations_varm_key)
-            for prior, gnames in weight_prior_groups.items()
-        ]
+        for axis, (priorattr, names) in enumerate(
+            zip(("factor_prior", "weight_prior"), (data.group_names, data.view_names), strict=True)
+        ):
+            priors = getattr(self._model_opts, priorattr)
+            if isinstance(priors, str):
+                priors = [Prior(priors, axis=axis, names=names)]
+            elif isinstance(priors, APIPrior):
+                priors = [priors(axis=axis, names=names)]
+            else:
+                prior_groups = defaultdict(list)
+                for group_name, prior in priors.items():
+                    if isinstance(group_name, str):
+                        prior_groups[prior].append(group_name)
+                    else:
+                        prior_groups[prior].extend(group_name)
+                priors = []
+                for priorname, names in prior_groups.items():
+                    if isinstance(priorname, str):
+                        prior = Prior(priorname, axis=axis, names=names)
+                    else:
+                        prior = priorname(axis=axis, names=names)
+                    priors.append(prior)
+            setattr(self._model_opts, priorattr, priors)
 
     def _fit(self, data, preprocessor):
         pyro.set_rng_seed(self._train_opts.seed)
@@ -1034,7 +1001,6 @@ class MOFAFLEX:
             "data_opts": self._data_opts.asdict(),
             "model_opts": self._model_opts.asdict(),
             "train_opts": self._train_opts.asdict(),
-            "gp_opts": self._gp_opts.asdict(),
             "preprocessor_state": self._preprocessor_state,
         }
         state["train_opts"]["device"] = str(state["train_opts"]["device"])
@@ -1088,7 +1054,6 @@ class MOFAFLEX:
         model._data_opts = DataOptions(**state["data_opts"])
         model._model_opts = ModelOptions(**state["model_opts"])
         model._train_opts = TrainingOptions(**state["train_opts"])
-        model._gp_opts = SmoothOptions(**state["gp_opts"])
         model._preprocessor_state = state["preprocessor_state"]
 
         model._model_opts.factor_prior = [
@@ -1150,8 +1115,8 @@ def _init_api():
     getter_indents = [" " * get_indentation(doc) for doc in getter_docs]
 
     for axis, axisname, priors in (
-        (0, "factor", Prior.known_factor_priors()),
-        (1, "weight", Prior.known_weight_priors()),
+        (0, "factor", Prior.known_priors("factors")),
+        (1, "weight", Prior.known_priors("weights")),
     ):
         namescount = Counter()
         for api in chain(*(Prior.class_(x).api() for x in priors)):
