@@ -31,7 +31,7 @@ from .. import pl
 from . import preprocessing
 from .api.priors import Prior as APIPrior
 from .datasets import GuidingVarsDataset, MofaFlexBatchSampler, MofaFlexDataset, StackDataset
-from .io import MOFACompatOption, load_model, save_model
+from .io import load_model, save_model
 from .likelihoods import Likelihood, LikelihoodType
 from .priors import API, APIType, FactorPriorType, Prior, WeightPriorType
 from .pyro import MofaFlexModel
@@ -147,10 +147,6 @@ class TrainingOptions(Options):
 
     save_path: Path | str | None = None
     """Path to save model."""
-
-    mofa_compat: MOFACompatOption = False
-    """Save model in MOFA2 compatible format. If `True` or `"full"`, will include the data in the file. This
-    can result in very large files. `"modelonly"` will save only the trained model."""
 
     seed: int | None = None
     """Seed for the pseudorandom number generator."""
@@ -782,7 +778,7 @@ class MOFAFLEX:
                 self._train_opts.save_path = str(self._train_opts.save_path)
             _logger.info(f"Saving results to {self._train_opts.save_path}...")
             Path(self._train_opts.save_path).parent.mkdir(parents=True, exist_ok=True)
-            self._save(self._train_opts.save_path, self._train_opts.mofa_compat, data, preprocessor.feature_means)
+            self._save(self._train_opts.save_path)
 
         self._init_api()
 
@@ -975,13 +971,7 @@ class MOFAFLEX:
             preprocessor=data.preprocessor,
         )
 
-    def _save(
-        self,
-        path: str | Path,
-        mofa_compat: MOFACompatOption = False,
-        data: Mapping[str, Mapping[str, AnnData]] | None = None,
-        intercepts: Mapping[str, Mapping[str, np.ndarray]] | None = None,
-    ):
+    def _save(self, path: str | Path):
         state = {
             "weights": self._weights._asdict(),
             "factors": self._factors._asdict(),
@@ -1014,7 +1004,7 @@ class MOFAFLEX:
             str(i): prior.save() for i, prior in enumerate(state["model_opts"]["weight_prior"])
         }
 
-        save_model(state, path, mofa_compat, self, data, intercepts)
+        save_model(state, path)
 
     @classmethod
     def load(cls, path: str | Path, map_location=None) -> "MOFAFLEX":

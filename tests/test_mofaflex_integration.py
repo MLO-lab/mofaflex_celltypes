@@ -170,7 +170,7 @@ def test_integration_gp(anndata_dict, attrname, attrvalue, n_particles, batch_si
                 covariates_obs_key="covar", **{attrname: attrvalue}, n_inducing=20, warp_interval=1
             ),
         ),
-        TrainingOptions(max_epochs=2, seed=42, mofa_compat=True, batch_size=batch_size, n_particles=n_particles),
+        TrainingOptions(max_epochs=2, seed=42, batch_size=batch_size, n_particles=n_particles),
     )
 
     with chdir(tmp_path), settings.override(use_dask=usedask):
