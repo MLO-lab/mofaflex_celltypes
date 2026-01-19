@@ -98,7 +98,7 @@ class Horseshoe(Prior):
                     )
                     c = torch.sqrt(caux)
                     if (prior_scale := self._get_prior_scale(name, **kwargs)) is not None:
-                        c = c * prior_scale.reshape(self._shapes[name])
+                        c = c * prior_scale
                     local_scale = (c * local_scale) / torch.sqrt(c**2 + local_scale**2)
                 return pyro.sample(f"z_{name}", dist.Normal(torch.zeros((1,)), local_scale))
 
@@ -174,8 +174,15 @@ class InformedHorseshoe(Horseshoe):
     ):
         super()._on_train_start(factor_dim, nonfactor_dim, n_factors, n_nonfactors, init_tensor)
 
+        new_shape = [1] * abs(min(factor_dim, nonfactor_dim))
+        new_shape[factor_dim] = -1
+        self._uninformed_scale = torch.as_tensor(self._uninformed_scale).reshape(new_shape)
+
     def _get_prior_scale(self, name: str, hs_prior_scales: dict[str, torch.Tensor], **kwargs):
-        return hs_prior_scales[name]
+        try:
+            return hs_prior_scales[name].reshape(self._shapes[name])
+        except KeyError:
+            return self._uninformed_scale
 
     def get_datasets(
         self,
@@ -186,20 +193,14 @@ class InformedHorseshoe(Horseshoe):
         n_factors: int,
         n_nonfactors: Mapping[str, int],
     ) -> dict[str, dict[str, np.ndarray]]:
+        self._uninformed_scale = data.cast_to(1 - self._annotation_confidence)
         prior_scales = {
-            name: np.clip(
-                self._annotations.get(name, np.broadcast_to(0, (n_nonfactors[name], self._n_informed_factors))).astype(
-                    np.float32
-                )
-                + (1 - self._annotation_confidence),
-                1e-8,
-                1.0,
-            )
-            for name in self._names
+            name: np.clip(annotation.astype(data.cast_to) + (1 - self._annotation_confidence), 1e-8, 1.0)
+            for name, annotation in self._annotations.items()
         }
 
         if n_factors > self._n_informed_factors:
-            one = np.asarray(1, dtype=np.float32)
+            one = np.asarray(1, dtype=data.cast_to)
             prior_scales = {
                 name: np.concatenate(
                     (
@@ -217,11 +218,18 @@ class InformedHorseshoe(Horseshoe):
                 )
                 for name, scales in prior_scales.items()
             }
+            self._uninformed_scale = np.concatenate(
+                (
+                    np.broadcast_to(one, self._informed_factors_start_idx),
+                    np.broadcast_to(self._uninformed_scale, self.n_informed_factors),
+                    np.broadcast_to(one, n_factors - self._informed_factors_start_idx - self._n_informed_factors),
+                )
+            )
 
-        for name in self._names:
-            prior_scale = prior_scales[name]
-            if factor_dim < nonfactor_dim and prior_scale.shape[0] != n_factors:
-                prior_scales[name] = prior_scale.T
+        if factor_dim < nonfactor_dim:
+            for name, prior_scale in prior_scales.items():
+                if prior_scale.shape[0] != n_factors:
+                    prior_scales[name] = prior_scale.T
 
         return {"hs_prior_scales": prior_scales}
 
