@@ -9,12 +9,13 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
 from .._core import MOFAFLEX, MofaFlexDataset, pcgse_test
+from .._core.api import types
 
 _logger = logging.getLogger(__name__)
 
 
 def test_annotation_significance(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     annotations: dict[str, pd.DataFrame],
     data: MuData | dict[str, dict[str, AnnData]] | MofaFlexDataset | None = None,
     corr_adjust: bool = True,
@@ -27,7 +28,7 @@ def test_annotation_significance(
     This is an implementation of PCGSE :cite:p:`pmid26300978`.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         annotations: Boolean dataframe with feature sets in each row for each view.
         data: The data that the model was trained on. Only required if `corr_adjust=True`.
         corr_adjust: Whether to adjust for correlations between features.
@@ -43,7 +44,7 @@ def test_annotation_significance(
         raise ValueError("`data` cannot be `None` if `corr_adjust=True`.")
 
     if data is not None and not isinstance(data, MofaFlexDataset):
-        data = model._mofaflexdataset(data)
+        data = model._make_dataset(data)
     annotations = {
         view_name: annot.loc[features, :].astype(bool)
         for view_name, annot in annotations.items()
@@ -51,12 +52,17 @@ def test_annotation_significance(
         and (features := annot.index.intersection(model.feature_names[view_name])).size > 0
     }
 
+    if isinstance(model, MOFAFLEX):
+        term = next(iter(model._model.terms.values()))
+    else:
+        term = model._term
+
     if len(annotations) > 0:
         return pcgse_test(
             data,
-            model._model_opts.nonnegative_weights,
+            term._nonnegative_weights,
             annotations,
-            model.get_weights(),
+            term.get_weights(),
             corr_adjust=corr_adjust,
             p_adj_method=p_adj_method,
             min_size=min_size,

@@ -307,19 +307,6 @@ class AnnDataDictDataset(MofaFlexDataset):
         out[map.d2g >= 0, ...] = arr[local_indexer(map), ...]
         return np.moveaxis(out, 0, axis)
 
-    def _align_data_array_to_global(
-        self,
-        arr: NDArray[T],
-        group_name: str,
-        view_name: str,
-        align_to: Literal["samples", "features"],
-        axis: int = 0,
-        fill_value: np.ScalarType = np.nan,
-    ):
-        return self._align_array_to_global(
-            arr, group_name, view_name, align_to, lambda map: map.d2g[map.d2g >= 0], axis, fill_value
-        )
-
     def align_local_array_to_global(
         self,
         arr: NDArray[T],
@@ -405,8 +392,9 @@ class AnnDataDictDataset(MofaFlexDataset):
         axis: int,
         key: Mapping[str, str],
         mkey: Mapping[str, str],
+        filter_names: Sequence[str] | None,
         fill_value: Callable[[np.dtype | pd.api.extensions.ExtensionDtype], Union[*np.ScalarType]],
-    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
+    ) -> dict[str, dict[str, pd.DataFrame]]:
         if axis == 0:
             attr = "obs"
             align_names = self.sample_names
@@ -422,7 +410,11 @@ class AnnDataDictDataset(MofaFlexDataset):
         covariates = defaultdict(dict)
         covar_dims = defaultdict(set)
         for group_name, group in self._data.items():
+            if axis == 0 and filter_names is not None and group_name not in filter_names:
+                continue
             for view_name, view in group.items():
+                if axis == 1 and filter_names is not None and view_name not in filter_names:
+                    continue
                 outer_key, inner_key = (group_name, view_name)[dict_reorder]
 
                 ckey = key.get(outer_key, None)
@@ -506,15 +498,20 @@ class AnnDataDictDataset(MofaFlexDataset):
         return ret
 
     def _apply_by_group_view(
-        self, func: ApplyCallable[T], gvkwargs: Mapping[str, Mapping[str, Mapping[str, Any]]], **kwargs
+        self,
+        func: ApplyCallable[T],
+        group_names: Sequence[str],
+        view_names: Sequence[str] | None,
+        gvkwargs: Mapping[str, Mapping[str, Mapping[str, Any]]],
+        **kwargs,
     ) -> dict[str, dict[str, T]]:
         havedask = have_dask()
         if not havedask and settings.use_dask:
             warn_dask(_logger)
         ret = {}
-        for group_name in self.group_names:
+        for group_name in group_names:
             cret = {}
-            for view_name in self.view_names:
+            for view_name in view_names:
                 view = self._view_for_apply(group_name, view_name)
                 if view is not None:
                     ccret = func(view, group_name, view_name, **kwargs, **gvkwargs[group_name][view_name])
@@ -523,13 +520,13 @@ class AnnDataDictDataset(MofaFlexDataset):
         return ret
 
     def _apply_by_view(
-        self, func: ApplyCallable[T], vkwargs: Mapping[str, Mapping[str, Any]], **kwargs
+        self, func: ApplyCallable[T], view_names: Sequence[str], vkwargs: Mapping[str, Mapping[str, Any]], **kwargs
     ) -> dict[str, T]:
         havedask = have_dask()
         ret = {}
         if not havedask and settings.use_dask:
             warn_dask(_logger)
-        for view_name in self.view_names:
+        for view_name in view_names:
             data = {}
             convert = False
             for group_name, group in self._data.items():
@@ -567,13 +564,14 @@ class AnnDataDictDataset(MofaFlexDataset):
         return ret
 
     def _apply_by_group(
-        self, func: ApplyCallable[T], gkwargs: Mapping[str, Mapping[str, Any]], **kwargs
+        self, func: ApplyCallable[T], group_names: Sequence[str], gkwargs: Mapping[str, Mapping[str, Any]], **kwargs
     ) -> dict[str, T]:
         havedask = have_dask()
         ret = {}
         if not havedask and settings.use_dask:
             warn_dask(_logger)
-        for group_name, group in self._data.items():
+        for group_name in group_names:
+            group = self._data[group_name]
             data = {}
             convert = False
             gvarmap = self._varmap[group_name]

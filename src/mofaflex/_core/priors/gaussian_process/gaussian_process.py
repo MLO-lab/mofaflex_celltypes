@@ -1,16 +1,20 @@
 import logging
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
-from typing import Literal
+from types import MappingProxyType
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
+import pyro
+import pyro.distributions as dist
 import torch
 from dtw import dtw
 from numpy.typing import NDArray
+from pyro.distributions import constraints
+from pyro.nn import PyroParam, pyro_method
 
-from ...datasets import CovariatesDataset, MofaFlexDataset
-from ...pyro.priors import GaussianProcess as PyroGP
+from ...datasets import MofaFlexDataset, merge_covariates
 from ...utils import MeanStd, pickle_torch_state, unpickle_torch_state
 from .. import Prior
 from .gp import GP
@@ -29,11 +33,11 @@ class GaussianProcess(Prior):
         mefisto_kernel: Whether to use the MEFISTO group covariance kernel or treat groups independently.
         independent_lengthscales: Whether to use a separate lengthscale per covariate dimension.
         group_cvar_rank: Rank of the group correlation matrix. Only relevant if `mefisto_kernel=True`.
-        warp_groups: List of groups to apply dynamic time warping to.
+        warp: Whether to use dynamic time warping. Warping is only supported for 1D covariates.
         warp_interval: Apply dynamic time warping every `warp_interval` epochs.
         warp_open_begin: Perform open-ended alignment.
         warp_open_end: Perform open-ended alignment.
-        warp_reference_group: Reference group to align the others to. Defaults to the first group of `warp_groups`.
+        warp_reference_group: Reference group to align the others to. Defaults to the first group.
     """
 
     _state_attrs = (
@@ -46,7 +50,7 @@ class GaussianProcess(Prior):
         "_mefisto_kernel",
         "_independent_lengthscales",
         "_group_covar_rank",
-        "_warp_groups",
+        "_warp",
         "_warp_interval",
         "_warp_open_begin",
         "_warp_open_end",
@@ -58,7 +62,6 @@ class GaussianProcess(Prior):
 
     def __init__(
         self,
-        axis: Literal[0, 1, "samples", "features"],
         names: str | Sequence[str],
         covariates_obs_key: str | Mapping[str] | None = None,
         covariates_obsm_key: str | Mapping[str] | None = None,
@@ -67,13 +70,13 @@ class GaussianProcess(Prior):
         mefisto_kernel: bool = True,
         independent_lengthscales: bool = False,
         group_covar_rank: int = 1,
-        warp_groups: Sequence[str] = (),
+        warp: bool = False,
         warp_interval: int = 20,
         warp_open_begin: bool = True,
         warp_open_end: bool = True,
         warp_reference_group: str | None = None,
     ):
-        super().__init__(axis, names)
+        super().__init__(names)
 
         if covariates_obs_key is None and covariates_obsm_key is None:
             raise ValueError("Neither `covariates_obs_key` nor covariates_obsm_key` given.")
@@ -87,7 +90,7 @@ class GaussianProcess(Prior):
         self._mefisto_kernel = mefisto_kernel
         self._independent_lengthscales = independent_lengthscales
         self._group_covar_rank = group_covar_rank
-        self._warp_groups = [warp_groups] if isinstance(warp_groups, str) else list(warp_groups)
+        self._warp = warp
         self._warp_interval = warp_interval
         self._warp_open_begin = warp_open_begin
         self._warp_open_end = warp_open_end
@@ -96,41 +99,20 @@ class GaussianProcess(Prior):
         self._gp = None
         self._gps = None
 
-        self._pyro_prior = None
-
-    def get_datasets(self, data: MofaFlexDataset) -> dict[str, CovariatesDataset]:
-        dset = CovariatesDataset(data, self._obs_key, self._obsm_key, self._names)
-        self._covariates = dset.covariates
+    def get_datasets(
+        self,
+        data: MofaFlexDataset,
+        axis: Literal[0, 1],
+        factor_dim: int,
+        nonfactor_dim: int,
+        n_factors: int,
+        n_nonfactors: Mapping[str, int],
+    ) -> dict[str, dict[str, pd.DataFrame]]:
+        self._covariates = merge_covariates(data.get_covariates(axis, self._obs_key, self._obsm_key, self._names))
         for covar in self._covariates.values():
             if pd.api.types.is_integer_dtype(covar.columns):
                 covar.columns = "Covariate " + covar.columns.astype(str)
-        return {"gp_covariates": dset}
-
-    def _get_pyro_prior(self, n_factors: int, *args, **kwargs):
-        if len(self._warp_groups) > 1:
-            if not set(self._warp_groups) <= set(self._names):
-                raise ValueError(
-                    "The set of groups with dynamic time warping must be a subset of groups with a GP factor prior."
-                )
-            self._warp_groups_order = {}
-            for g in self._warp_groups:
-                ccov = self._covariates[g].to_numpy().squeeze()
-                if ccov.ndim > 1:
-                    raise ValueError(
-                        f"Warping can only be performed with 1D covariates, but the covariate for group {g} has {ccov.ndim} dimensions."
-                    )
-                self._warp_groups_order[g] = ccov.argsort()
-            self._orig_covariates = {g: c.copy() for g, c in self._covariates.items()}
-
-            if self._warp_reference_group is None:
-                self._warp_reference_group = self._warp_groups[0]
-        elif len(self._warp_groups) == 1:
-            _logger.warning("Need at least 2 groups for warping, but only one was given. Ignoring warping.")
-            self._warp_groups = []
-
-        self._init_gp(n_factors)
-
-        return PyroGP(self._names, *args, n_factors=n_factors, gp=self._gp, **kwargs)
+        return {"gp_covariates": self._covariates}
 
     def _init_gp(self, n_factors: int):
         self._gp = GP(
@@ -144,15 +126,71 @@ class GaussianProcess(Prior):
             use_mefisto_kernel=self._mefisto_kernel,
         )
 
+    def _on_train_start(
+        self,
+        factor_dim: int,
+        nonfactor_dim: int,
+        n_factors: int,
+        n_nonfactors: Mapping[str, int],
+        init_tensor: Mapping[str, Mapping[Literal["loc", "scale"], NDArray]] | None = None,
+    ):
+        init_loc: float = 0.0
+        init_scale: float = 0.1
+
+        if self._warp:
+            if len(self.names) > 1:
+                self._warp_groups_order = {}
+                for g in self.names:
+                    ccov = self._covariates[g].to_numpy().squeeze()
+                    if ccov.ndim > 1:
+                        raise ValueError(
+                            f"Warping can only be performed with 1D covariates, but the covariate for group {g} has {ccov.ndim} dimensions."
+                        )
+                    self._warp_groups_order[g] = ccov.argsort()
+                self._orig_covariates = {g: c.copy() for g, c in self._covariates.items()}
+
+                if self._warp_reference_group is None:
+                    self._warp_reference_group = self.names[0]
+            elif len(self.names) == 1:
+                _logger.warning("Need at least 2 groups for warping, but only one was given. Ignoring warping.")
+                self._warp = False
+
+        self._init_gp(n_factors)
+        self._gp = pyro.module("gp", self._gp)
+
+        self._sizes = [n_nonfactors[g] for g in self._names]
+        self._nonfactor_dim = nonfactor_dim
+        self._idx = {name: torch.as_tensor(i) for i, name in enumerate(self._names)}
+
+        ndims = abs(min(factor_dim, nonfactor_dim))
+        shape = [1] * ndims
+        shape[factor_dim] = n_factors
+        self._gp_shape = tuple(shape)
+
+        shape = [1] * ndims
+        shape[min(factor_dim, nonfactor_dim)] = n_factors
+        shape[max(factor_dim, nonfactor_dim)] = -1
+        self._full_gp_shape = tuple(shape)
+
+        if init_tensor is not None:
+            loc = torch.concatenate([init_tensor[name]["loc"] for name in self._names], dim=nonfactor_dim)
+            scale = torch.concatenate([init_tensor[name]["scale"] for name in self._names], dim=nonfactor_dim)
+        else:
+            loc = torch.full(shape, init_loc)
+            scale = torch.full(shape, init_scale)
+        self._loc = PyroParam(loc)
+        self._scale = PyroParam(scale, constraint=constraints.softplus_positive)
+
     def on_train_epoch_end(self, epoch: int):
-        if len(self._warp_groups) and epoch > 0 and not epoch % self._warp_interval:
+        if self._warp and epoch > 0 and not epoch % self._warp_interval:
             factormeans = {
-                group_name: mean.cpu().numpy() for group_name, mean in self._pyro_prior.posterior.mean.items()
+                group_name: mean.cpu().numpy() for group_name, mean in self.posterior.mean.items()
             }  # TODO: investigate how warping interacts with non-negativity
-            refgroup = self._warp_reference_group
-            reffactormeans = factormeans[refgroup].mean(axis=0)
-            refidx = self._warp_groups_order[refgroup]
-            for g in self._warp_groups[1:]:
+            reffactormeans = factormeans[self._warp_reference_group].mean(axis=0)
+            refidx = self._warp_groups_order[self._warp_reference_group]
+            for g in self.names:
+                if g == self._warp_reference_group:
+                    continue
                 idx = self._warp_groups_order[g]
                 alignment = dtw(
                     reffactormeans[refidx],
@@ -162,9 +200,9 @@ class GaussianProcess(Prior):
                     step_pattern="asymmetric",
                 )
                 self._covariates[g] = self._orig_covariates[g].copy()
-                self._covariates[g].iloc[idx[alignment.index2], 0] = self._orig_covariates[refgroup].iloc[
-                    refidx[alignment.index1], 0
-                ]
+                self._covariates[g].iloc[idx[alignment.index2], 0] = self._orig_covariates[
+                    self._warp_reference_group
+                ].iloc[refidx[alignment.index1], 0]
             self._gp.update_inducing_points(covar.to_numpy() for covar in self._covariates.values())
 
     def on_train_end(
@@ -209,15 +247,19 @@ class GaussianProcess(Prior):
 
     @Prior._api
     @property
-    def covariates(self) -> dict[str, NDArray[np.float32]]:
+    def covariates(self) -> Mapping[str, NDArray[np.float32]]:
         """Covariates for each group."""
-        return self._orig_covariates if self._orig_covariates is not None else self._covariates
+        return (
+            MappingProxyType(self._orig_covariates)
+            if hasattr(self, "_orig_covariates")
+            else MappingProxyType(self._covariates)
+        )
 
     @Prior._api
     @property
-    def warped_covariates(self) -> dict[str, NDArray[np.float32]] | None:
+    def warped_covariates(self) -> Mapping[str, NDArray[np.float32]] | None:
         """Time-warped covariates for each group, if dynamic time warping was enabled."""
-        return self._covariates if self._orig_covariates is not None else None
+        return MappingProxyType(self._covariates) if hasattr(self, "_orig_covariates") else None
 
     @Prior._api
     @property
@@ -243,7 +285,7 @@ class GaussianProcess(Prior):
         moment: Literal["mean", "std"] = "mean",
         x: Mapping[str, np.ndarray | torch.Tensor] | None = None,
         batch_size: int | None = None,
-    ) -> dict[str, pd.DataFrame]:
+    ) -> Mapping[str, pd.DataFrame]:
         """Get all latent functions.
 
         Args:
@@ -255,7 +297,7 @@ class GaussianProcess(Prior):
         """
         gp_old = getattr(self._gps, moment)
         if x is None:
-            return gp_old
+            return MappingProxyType(gp_old)
         else:
             gps = getattr(self._get_gps(x, batch_size), moment)
             for group_name_calc, gp_calc in gps.items():
@@ -269,8 +311,106 @@ class GaussianProcess(Prior):
             state["gp_state"] = pickle_torch_state(self._gp.state_dict())
         return state
 
-    def _load(self, state: dict, n_factors: int, n_nonfactors: Mapping[str, int], map_location=None):
+    def _load(
+        self, state: Mapping[str, Any], *, n_factors: int, n_nonfactors: Mapping[str, int], map_location=None, **kwargs
+    ):
         self._gps = MeanStd(**state["gps"])
         self._init_gp(n_factors)
         with suppress(KeyError):
             self._gp.load_state_dict(unpickle_torch_state(state["gp_state"], map_location=map_location))
+
+    def _get_nonfactor_plate(self, nonfactor_plates: Mapping[str, pyro.plate]) -> pyro.plate:
+        """Make combined sample plate."""
+        offset = 0
+        subsample = []
+        nonfactor_dim = None
+        for name in self._names:
+            splate = nonfactor_plates[name]
+            subsample.append(splate.indices + offset)
+            offset += splate.size
+            nonfactor_dim = splate.dim
+        subsample = torch.cat(subsample)
+        return pyro.plate("gp_nonfactors", offset, dim=nonfactor_dim, subsample=subsample)
+
+    @pyro_method
+    def model(
+        self,
+        factor_plate: pyro.plate,
+        nonfactor_plates: Mapping[str, pyro.plate],
+        gp_covariates: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, torch.Tensor]:
+        gnames = list(filter(lambda x: x in gp_covariates, self._names))
+        covars = torch.cat(tuple(gp_covariates[g] for g in gnames), dim=0)
+        idx = torch.cat(tuple(self._idx[g].expand(gp_covariates[g].shape[0]) for g in gnames), dim=0)
+        f_dist = self._gp.pyro_model((idx[..., None], covars), name_prefix="gp")
+
+        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
+        with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
+            f = pyro.sample("gp.f", f_dist)
+        new_f_shape = list(f.shape)
+        new_f_shape[-len(self._full_gp_shape) :] = self._full_gp_shape
+        f = f.reshape(new_f_shape)
+        if factor_plate.dim > nonfactor_plate.dim:
+            f = f.swapaxes(factor_plate.dim, nonfactor_plate.dim)
+
+        outputscale = self._gp.outputscale.reshape(self._gp_shape)
+
+        with factor_plate, nonfactor_plate:
+            return dict(
+                zip(
+                    self._names,
+                    torch.split(
+                        pyro.sample("z", dist.Normal(f, 1 - outputscale)),
+                        tuple(gp_covariates[g].shape[0] for g in gnames),
+                        dim=self._nonfactor_dim,
+                    ),
+                    strict=False,
+                )
+            )
+
+    @pyro_method
+    def guide(
+        self,
+        factor_plate: pyro.plate,
+        nonfactor_plates: Mapping[str, pyro.plate],
+        gp_covariates: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, torch.Tensor]:
+        gnames = list(filter(lambda x: x in gp_covariates, self._names))
+        covars = torch.cat(tuple(gp_covariates[g] for g in gnames), dim=0)
+        idx = torch.cat(tuple(self._idx[g].expand(gp_covariates[g].shape[0]) for g in gnames), dim=0)
+        f_dist = self._gp.pyro_guide((idx[..., None], covars), name_prefix="gp")
+
+        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
+        with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
+            pyro.sample("gp.f", f_dist)
+
+        with factor_plate, nonfactor_plate as index:
+            return dict(
+                zip(
+                    self._names,
+                    torch.split(
+                        pyro.sample(
+                            "z",
+                            dist.Normal(
+                                self._loc.index_select(nonfactor_plate.dim, index),
+                                self._scale.index_select(nonfactor_plate.dim, index),
+                            ),
+                        ),
+                        tuple(gp_covariates[g].shape[0] for g in gnames),
+                        dim=self._nonfactor_dim,
+                    ),
+                    strict=False,
+                )
+            )
+
+    @property
+    def posterior(self) -> MeanStd:
+        loc = dict(zip(self._names, torch.split(self._loc, self._sizes, dim=self._nonfactor_dim), strict=False))
+        scale = dict(zip(self._names, torch.split(self._scale, self._sizes, dim=self._nonfactor_dim), strict=False))
+        posteriors = MeanStd(loc, scale)
+        for res in posteriors:
+            for k, v in res.items():
+                res[k] = v.squeeze(self._squeezedims)
+        return posteriors

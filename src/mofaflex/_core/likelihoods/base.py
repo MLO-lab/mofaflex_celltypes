@@ -1,6 +1,7 @@
-import inspect
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import NamedTuple
 
 import numpy as np
@@ -9,8 +10,9 @@ from array_api_compat import array_namespace
 from numpy.typing import NDArray
 from scipy.sparse import issparse
 
-from ..pyro.likelihoods import PyroLikelihood
-from ..settings import settings
+from ..datasets import MofaFlexDataset
+from ..utils import SaveStateMixin, checked_baseclass
+from .pyro import Likelihood as PyroLikelihood
 
 _logger = logging.getLogger(__name__)
 
@@ -20,83 +22,75 @@ class R2(NamedTuple):
     ss_tot: float
 
 
-class _LikelihoodMeta(type(ABC)):
-    def __eq__(cls, o):
-        if isinstance(o, str):
-            return cls.__name__ == o
-        else:
-            return super().__eq__(o)
-
-    def __hash__(self):
-        return super().__hash__()
-
-    def __str__(cls):
-        return cls.__name__
-
-
-class Likelihood(ABC, metaclass=_LikelihoodMeta):
+@checked_baseclass(
+    required_init_args=("view_name", "data", "nonnegative"), required_attributes="_priority", registry="dict"
+)
+class Likelihood(SaveStateMixin, ABC):
     """Base class for MOFA-FLEX likelihoods.
 
-    All likelihood-specific functionality must be implemented via classmethods/staticmethods, subclasses
-    must be stateless. Subclasses must also contain two attributes:
+    Subclasses must contain the `priority` attribute, which is used during likelihood inference to return the
+    most suitable likelihood if multiple likelihoods  are suitable for the given data. Must be non-negative,
+    higher values indicate higher priority.
 
-        - `_priority`: used during likelihood inference to return the most suitable likelihood
-          if multiple likelihoods  are suitable for the given data. Must be non-negative, higher values
-          indicate higher priority.
-        - `scale_data`: indicates whether the likelihood requires data to be centered and scaled to unit variance.
+    Subclasses must also implement the `_get_pyro_likelihood`, `_validate`, `_r2_impl`, and `transform_prediction`
+    methods.
+
+    Args:
+        view_name: The name of the view for this likelihood.
+        data: The dataset.
+        nonnegative: Whether the model prediction for this view is constrained to be nonnegative.
     """
 
-    __subclasses = {}
+    _state_attrs = ("_view_name", "_nonnegative")
 
-    def __init_subclass__(cls, **kwargs):
-        for attr in ("_priority", "scale_data"):
-            if not hasattr(cls, attr):
-                raise NotImplementedError(f"Class `{cls.__name__}` does not have attribute `{attr}`.")
-        for name, val in inspect.getmembers_static(cls):
-            if inspect.isfunction(val):
-                raise TypeError(
-                    f"Class `{cls.__name__}` must be stateless, but method `{name}` is not static and not a class method."
-                )
-        super().__init_subclass__(**kwargs)
-        __class__.__subclasses[str(cls)] = cls
+    def __init__(self, view_name: str, data: MofaFlexDataset, nonnegative: bool = False):
+        super().__init__()
+        self._view_name = view_name
+        self._nonnegative = nonnegative
 
-    @staticmethod
-    def known_likelihoods() -> tuple[str]:
-        """Get all known likelihoods."""
-        return tuple(__class__.__subclasses.keys())
-
-    @staticmethod
-    def get(name: str) -> _LikelihoodMeta:
-        """Get the likelihood based on its name.
-
-        Args:
-            name: The name of the likelihood.
-        """
-        try:
-            return __class__.__subclasses[name]
-        except KeyError as e:
-            raise NotImplementedError(f"Unknown likelihood `{name}`") from e
-
-    @classmethod
-    @abstractmethod
-    def pyro_likelihood(
-        cls,
-        view_name: str,
-        sample_dim: int,
-        feature_dim: int,
-        sample_means: dict[str, dict[str, NDArray[np.floating]]],
-        feature_means: dict[str, dict[str, NDArray[np.floating]]],
-        **kwargs,
-    ) -> PyroLikelihood:
+    def get_pyro_likelihood(self, data: MofaFlexDataset, sample_dim: int, feature_dim: int):
         """Set up a Pyro likelihood object.
 
+        Subclasses must not reimpllement this method, but `_get_pyro_likelihood`.
+
         Args:
-            view_name: The view name.
+            data: The dataset.
             sample_dim: The sample dimension.
             feature_dim: the feature dimension.
-            sample_means: Averages of samples across features for each group and view.
-            feature_means: Averages of features across samples for each group and view.
-            **kwargs: Additional arguments, e.g. initialization of the variational parameters.
+        """
+        self._pyro_likelihood = self._get_pyro_likelihood(data, sample_dim, feature_dim)
+        return self._pyro_likelihood
+
+    @abstractmethod
+    def _get_pyro_likelihood(self, data: MofaFlexDataset, sample_dim: int, feature_dim: int) -> PyroLikelihood:
+        pass
+
+    def on_train_start(self):
+        """Hook that is called immediately prior to training."""
+        pass
+
+    def on_train_epoch_start(self, epoch: int):
+        """Hook that is called at the beginning of each epoch.
+
+        Args:
+            epoch: The current epoch.
+        """
+        pass
+
+    def on_train_epoch_end(self, epoch: int):
+        """Hook that is called at the end of each epoch.
+
+        Args:
+            epoch: The current epoch.
+        """
+        pass
+
+    def on_train_end(self, data: MofaFlexDataset, batch_size: int):
+        """Hook that is called at the end of training.
+
+        Args:
+            data: The dataset used during training.
+            batch_size: The batch size used during training.
         """
         pass
 
@@ -132,7 +126,7 @@ class Likelihood(ABC, metaclass=_LikelihoodMeta):
             raise ValueError(cls._format_validate_exception(view_name))
 
     @classmethod
-    def infer(cls, view: AnnData, *args) -> _LikelihoodMeta:
+    def infer(cls, view: AnnData, *args) -> type["Likelihood"]:
         """Infer a suitable likelihood for the given data.
 
         Args:
@@ -143,7 +137,7 @@ class Likelihood(ABC, metaclass=_LikelihoodMeta):
         xp = array_namespace(data)
         data = data[~xp.isnan(data)]
 
-        inferred = {subcls: subcls._priority for subcls in cls.__subclasses.values() if subcls._validate(data, xp)}
+        inferred = {subcls: subcls._priority for subcls in __class__._registry.values() if subcls._validate(data, xp)}
         lklhdcls = max(((subcls, prio) for subcls, prio in inferred.items()), key=lambda x: x[1])[0]
         return lklhdcls
 
@@ -160,98 +154,87 @@ class Likelihood(ABC, metaclass=_LikelihoodMeta):
         sVa = np.sqrt(1 + dVa**2)
         return 1 / (16 * nu2**2) * (np.log((dVb + sVb) / (dVa + sVa)) + dVb * sVb - dVa * sVa) ** 2
 
-    @classmethod
     @abstractmethod
     def _r2_impl(
-        cls,
-        y_true: NDArray,
-        y_pred: NDArray[np.floating],
-        dispersions: NDArray[np.floating],
-        sample_means: NDArray[np.floating],
+        self, y_true: NDArray, y_pred: NDArray[np.floating], alignment_idx: NDArray[int], group_name: str
     ) -> R2:
         """Implementation of R2 calculation.
 
         Args:
             y_true: The observed data.
             y_pred: The predicted data.
-            dispersions: The estimated dispersions.
-            sample_means: Averages of samples across features.
+            alignment_idx: Index to use for subsetting arrays aligned to global features in order to align them to local features.
+            group_name: The group name.
         """
         pass
 
-    @classmethod
     @abstractmethod
-    def transform_prediction(cls, prediction: NDArray[np.floating], sample_means: NDArray[np.floating]):
+    def transform_prediction(
+        self,
+        prediction: NDArray[np.floating],
+        group_name: str,
+        sample_idx: NDArray[int] | slice = slice(None),
+        feature_idx: NDArray[int] | slice = slice(None),
+    ):
         """Transform the raw model prediction into something compatible with the data, a.k.a. inverse link function.
 
         Args:
             prediction: The model prediction.
-            sample_means: Averages of samples across features
+            group_name: The group name.
+            sample_idx: The sample indices of the prediction, if only a subset of samples were predicted.
+            feature_idx: The feature indices of the prediction, if only a subset of features were predicted.
         """
         pass
 
-    @classmethod
-    def _r2_impl_wrapper(
-        cls,
-        y_true: NDArray,
-        factor: NDArray[np.floating],
-        weights: NDArray[np.floating],
-        dispersions: NDArray[np.floating],
-        sample_means: NDArray[np.floating],
+    @abstractmethod
+    def transform_data(
+        self,
+        data: NDArray[np.number],
+        group_name: str,
+        sample_idx: NDArray[int] | slice = slice(None),
+        feature_idx: NDArray[int] | slice = slice(None),
     ):
-        y_pred = cls.transform_prediction(factor @ weights.T, sample_means)
-        r2 = cls._r2_impl(y_true, y_pred, dispersions, sample_means)
-        return max(0.0, 1.0 - r2.ss_res / r2.ss_tot)
+        """Transform the data into something compatible with the raw model prediction, a.k.a. link function.
 
-    @classmethod
-    def _r2(
-        cls,
-        r2_full: float,
-        y_true: NDArray,
-        factors: NDArray[np.floating],
-        weights: NDArray[np.floating],
-        dispersions: NDArray[np.floating],
-        sample_means: NDArray[np.floating],
-    ) -> NDArray[np.float32]:
-        r2s = np.empty(factors.shape[1], dtype=np.float32)
-        # For models with a link function that is not the identity, such as Bernoulli, calculating R2 of single
-        # factors leads to erroneous results, in the case of Bernoulli it can lead to every factor having negative
-        # R2 values. This is because an unimportant factor will not contribute much to the full model, but the zero
-        # prediction of this single factor will be mapped by the link function to a non-zero value, which can result
-        # in a worse prediction than the intercept-only null model. As a workaround, we therefore calculate R2 of
-        # a model with all factors except for one and subtract it from the R2 value of the full model to arrive at
-        # the R2 of the current factor.
-        for k in range(factors.shape[1]):
-            cfactors = np.delete(factors, k, 1)
-            cweights = np.delete(weights, k, 1)
-            cr2 = cls._r2_impl_wrapper(y_true, cfactors, cweights, dispersions, sample_means)
-            r2s[k] = max(0.0, r2_full - cr2)
-        return r2s
+        Args:
+            data: The data.
+            group_name: The group name.
+            sample_idx: The sample indices of the prediction, if only a subset of samples were predicted.
+            feature_idx: The feature indices of the prediction, if only a subset of features were predicted.
+        """
 
-    @classmethod
     def r2(
-        cls,
-        view_name: str,
+        self,
         y_true: NDArray,
-        factors: NDArray[np.floating],
-        weights: NDArray[np.floating],
-        dispersions: NDArray[np.floating],
-        sample_means: NDArray[np.floating],
-    ) -> tuple[float, NDArray[np.float32]]:
+        y_pred: NDArray[np.floating],
+        group_name: str,
+        sample_idx: NDArray[int] | slice = slice(None),
+        feature_idx: NDArray[int] | slice = slice(None),
+    ) -> tuple[float, NDArray[np.floating]]:
         """Calculate R2 (fraction of explained variance) for a factor model.
 
         Args:
-            view_name: The name of the view.
             y_true: The observed data.
-            factors: The factors.
-            weights: The weights.
-            dispersions: Estimated dispersions.
-            sample_means: Averages of samples across features.
+            y_pred: The predicted data.
+            group_name: The group name.
+            sample_idx: The sample indices of the prediction, if only a subset of samples were predicted.
+            feature_idx: The feature indices of the prediction, if only a subset of features were predicted.
         """
-        r2_full = cls._r2_impl_wrapper(y_true, factors, weights, dispersions, sample_means)
-        if r2_full < settings.get("eps"):
-            _logger.warning(
-                f"R2 for view {view_name} is 0. Increase the number of factors and/or the number of training epochs."
-            )
-            return r2_full, np.zeros(factors.shape[1], dtype=np.float32)
-        return r2_full, cls._r2(r2_full, y_true, factors, weights, dispersions, sample_means)
+        r2 = self._r2_impl(
+            y_true,
+            self.transform_prediction(y_pred, group_name, sample_idx, feature_idx),
+            group_name,
+            sample_idx,
+            feature_idx,
+        )
+        return max(0.0, 1.0 - r2.ss_res / r2.ss_tot)
+
+    @classmethod
+    def known_likelihoods(cls) -> Mapping[str, type["Likelihood"]]:
+        """Get all known likelihoods."""
+        return MappingProxyType(__class__._registry)
+
+    @property
+    def dispersion(self):
+        """Get the estimated dispersion."""
+        pass

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import suppress
 from functools import partial
 from typing import TYPE_CHECKING, Literal
 
@@ -16,6 +17,7 @@ from .. import tl
 
 if TYPE_CHECKING:
     from .._core import MOFAFLEX, MofaFlexDataset
+    from .._core.api import types
 
 
 def _rescale_zerosymmetric(x, to: tuple[float, float] = (0, 1), _from: tuple[float, float] | None = None):
@@ -41,13 +43,30 @@ _no_axis_ticks_x = {"axis_ticks_length_major_x": 0, "axis_ticks_length_minor_x":
 _no_axis_ticks_y = {"axis_ticks_length_major_y": 0, "axis_ticks_length_minor_y": 0}
 
 
+def _covariate_df(data, key):
+    cov = data.get_covariates(axis=0, key=key)
+    for group_name, group in cov.items():
+        have_covariate = False
+        for view in group.values():
+            with suppress(KeyError):
+                cov[group_name] = view[key]
+                have_covariate = True
+                break
+        if not have_covariate:  # can't use else here in case group is empty
+            raise ValueError(f"Covariate '{key}' not found in the data for group {group_name}.")
+    if len(cov) == 0:
+        raise ValueError(f"Covariate '{key}' not found in the data.")
+    return cov
+
+
 def factors_scatter(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     x: int | str,
     y: int | str,
     groups: str | Sequence[str] | None = None,
     color: str | None = None,
     shape: str | None = None,
+    data: MuData | dict[str, dict[str, AnnData]] | None = None,
     size: float = 2,
     alpha: float = 1,
     figsize: tuple[float, float] | None = None,
@@ -57,12 +76,14 @@ def factors_scatter(
     """Plot two factors against each other and color by covariates.
 
     Args:
-        model: A MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         x: The factor to plot on the x-axis.
         y: The factor to plot on the y-axis.
+            only one additive term.
         groups: The groups to plot. If `None`, all groups are shown.
         color: The covariate name to color by.
         shape: The covariate name to shape by.
+        data: The data that the model was trained on. Only required if `color is not None` or `shape is not None`.
         size: Size of the data points.
         alpha: Transparency of the data points.
         figsize: Figure size in inches.
@@ -78,25 +99,30 @@ def factors_scatter(
 
     if isinstance(x, int):
         if x < 1 or x > model.n_factors:
-            raise ValueError("Factor x must be in range of the number of factors.")
+            raise ValueError(f"Factor 'x' must be between 1 and {model.n_factors}.")
         else:
             x = model.factor_names[x - 1]
     if isinstance(y, int):
         if y < 1 or y > model.n_factors:
-            raise ValueError("Factor y must be in range of the number of factors.")
+            raise ValueError(f"Factor 'y' must be between 1 and {model.n_factors}.")
         else:
             y = model.factor_names[y - 1]
 
-    facs = model.get_factors(return_type="anndata")
-    df_factors = []
-    for group in groups:
-        df_factors.append(pd.concat([facs[group].to_df(), facs[group].obs], axis=1).assign(group=group))
-    df_factors = pd.concat(df_factors, axis=0)
+    if (color is not None or shape is not None) and data is None:
+        raise ValueError("'data' cannot be 'None' if 'color' or 'shape' are given.")
+    elif data is not None:
+        data = model._make_dataset(data)
 
-    if color is not None and color not in df_factors.columns:
-        raise ValueError(f"Color variable {color} not found in the data.")
-    if shape is not None and shape not in df_factors.columns:
-        raise ValueError(f"Shape variable {shape} not found in the data.")
+    df_factors = pd.concat(model.get_factors(), axis=0)
+
+    toconcat = []
+    if color is not None:
+        toconcat.append(pd.concat(_covariate_df(data, color), axis=0))
+    if shape is not None:
+        toconcat.append(pd.concat(_covariate_df(data, shape), axis=0))
+    if len(toconcat) > 0:
+        df_factors = pd.concat((df_factors, *toconcat), axis=1)
+    df_factors.reset_index(names=["group", "sample"], inplace=True)
 
     aes_kwargs = {}
     if color is not None:
@@ -117,19 +143,21 @@ def factors_scatter(
 
 
 def covariates_factor_scatter(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     factor: int | str,
     groups: str | Sequence[str] | None = None,
     covariate_dims: int | str | Sequence[int] | Sequence[str] | None = None,
     color: int | str | None = None,
     shape: str | None = None,
+    data: MuData | dict[str, dict[str, AnnData]] | None = None,
     size: float = 1,
+    alpha: float = 1,
     figsize: tuple[float, float] = (6, 6),
 ) -> p9.ggplot:
     """Plot a factor against one or two covariate dimensions.
 
     Args:
-        model: A MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         factor: The factor to plot.
         groups: The groups to plot. If `None`, all groups with covariates are shown.
         covariate_dims: The dimensions of the covariates to plot against. If a list of length 1, plot covariate
@@ -137,12 +165,14 @@ def covariates_factor_scatter(
             the second covariate on the y-axis, and factor as color. If None, use all dimensions.
         color: The factor or covariate to color by. Only used when one covariate dimension is plotted.
         shape: The covariate name to shape by.
+        data: The data that the model was trained on. Only required if `color is not None` or `shape is not None`.
         size: Size of the data points.
+        alpha: Transparency of the data points.
         figsize: Figure size in inches.
     """
     if isinstance(factor, int):
         if factor not in range(1, model.n_factors + 1):
-            raise ValueError(f"Factors must be between 1 and {model.n_factors}.")
+            raise ValueError(f"Factor must be between 1 and {model.n_factors}.")
         else:
             factor = model.factor_names[factor - 1]
 
@@ -153,20 +183,8 @@ def covariates_factor_scatter(
     if figsize is None:
         figsize = (5 * len(groups), 5)
 
-    facs = model.get_factors(return_type="anndata")
-    df_factors = []
-    df_covariates = []
-    for group in groups:
-        df_factors.append(pd.concat([facs[group].to_df(), facs[group].obs], axis=1).assign(group=group))
-
-        covnames = (
-            model.covariates_names[group]
-            if group in model.covariates_names
-            else [f"Covariate {i}" for i in range(model.covariates[group].shape[1])]
-        )
-        df_covariates.append(pd.DataFrame(model.covariates[group], index=df_factors[-1].index, columns=covnames))
-    df_factors = pd.concat(df_factors, axis=0)
-    df_covariates = pd.concat(df_covariates, axis=0)
+    df_factors = pd.concat(model.get_factors(), axis=0)
+    df_covariates = pd.concat(model.covariates, axis=0)
 
     if isinstance(covariate_dims, int | str):
         covariate_dims = [covariate_dims]
@@ -181,15 +199,21 @@ def covariates_factor_scatter(
     elif len(covariate_dims) not in (1, 2):
         raise ValueError("Can only plot 1 or 2 covariate dimensions.")
 
+    if (color is not None or shape is not None) and data is None:
+        raise ValueError("'data' cannot be 'None' if 'color' or 'shape' are given.")
+    elif data is not None:
+        data = model._make_dataset(data)
+
+    toconcat = []
     if color is not None:
         if isinstance(color, int):
             color = model.factor_names[color]
-        if color not in df_factors.columns:
-            raise ValueError(f"Color variable {color} not found in the data.")
+        elif color not in df_factors.columns:
+            toconcat.append(pd.concat(_covariate_df(data, color), axis=0))
     if shape is not None and shape not in df_factors.columns:
-        raise ValueError(f"Shape variable {shape} not found in the data.")
+        toconcat.append(pd.concat(_covariate_df(data, shape), axis=0))
 
-    df = pd.concat([df_factors, df_covariates], axis=1)
+    df = pd.concat([df_factors, df_covariates, *toconcat], axis=1).reset_index(names=["group", "sample"])
 
     aes_kwargs = {}
     if len(covariate_dims) == 1:
@@ -208,7 +232,7 @@ def covariates_factor_scatter(
 
     plot = (
         p9.ggplot(df, p9.aes(x=x, y=y, **aes_kwargs))
-        + p9.geom_point(size=size)
+        + p9.geom_point(size=size, alpha=alpha, stroke=0)
         + p9.facet_wrap("group")
         + p9.theme(figure_size=figsize)
     )
@@ -239,11 +263,11 @@ def training_curve(
     return plot
 
 
-def factor_correlation(model: MOFAFLEX, figsize: tuple[float, float] = (8, 8)) -> p9.ggplot:
+def factor_correlation(model: types.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = (8, 8)) -> p9.ggplot:
     """Plot the correlation between factors.
 
     Args:
-        model: The model to plot the factor correlation for.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         figsize: Figure size in inches.
     """
     all_corr_dfs = []
@@ -366,23 +390,14 @@ def variance_explained(
     else:
         raise ValueError("`group_by` argument must be either 'group' or 'view'.")
 
-    df_r2 = model.get_r2(ordered=True)
-
-    combined_df = []
     if figsize is None:
         figsize = (len(model.group_names) * 3, 5)
 
-    for group_name, df in df_r2.items():
-        r2_df = df.reset_index(names="factor").melt("factor", var_name="view", value_name="var_exp")
-        r2_df["group"] = group_name
-
-        combined_df.append(r2_df)
-    combined_df = pd.concat(combined_df, ignore_index=True).assign(
-        factor=lambda x: pd.Categorical(x.factor, categories=x.factor.unique())
+    df_r2 = model.get_r2("term", ordered=True).assign(
+        factor=lambda x: pd.Categorical(x.component, categories=x.component.unique())
     )
-
-    combined_heatmap = (
-        p9.ggplot(combined_df, p9.aes(x=x, y="factor", fill="var_exp"))
+    heatmap = (
+        p9.ggplot(df_r2, p9.aes(x=x, y="factor", fill="R2"))
         + p9.geom_tile()
         + p9.scale_fill_distiller(palette="OrRd", limits=(0, None), expand=(0, 0, 1.1, 0), name="Variance\nexplained")
         + p9.scale_x_discrete(expand=(0, 0))
@@ -394,11 +409,11 @@ def variance_explained(
         + p9.facet_wrap(group_by)
     )
 
-    return combined_heatmap
+    return heatmap
 
 
 def factor_significance(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     n_factors: int | None = None,
     views: str | Sequence[str] | None = None,
     groups: str | Sequence[str] | None = None,
@@ -412,7 +427,7 @@ def factor_significance(
     `alpha` FDR will be annotated with the direction of the test.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         n_factors: Number of top factors to plot. If `None`, plot all factors (ordered).
         views: The views to consider in the ranking. If `None`, plot all views.
         groups: The groups to consider in the ranking. If `None`, plot all groups.
@@ -437,46 +452,52 @@ def factor_significance(
     if figsize is None:
         figsize = (6 * len(views), 4 * len(groups))
 
-    pcgse_results = {
-        view_name: pcgse_results[view_name].loc[
-            (pcgse_results[view_name]["factor"] == pcgse_results[view_name]["annotation"]), :
-        ]
-        for view_name in views
-    }
-    r2 = model.get_r2()
-    annotations = model.get_annotations()
+    pcgse_results = (
+        pd.concat(
+            {
+                view_name: pcgse_results[view_name].loc[
+                    (pcgse_results[view_name]["factor"] == pcgse_results[view_name]["annotation"]), :
+                ]
+                for view_name in views
+            },
+            axis=0,
+        )
+        .reset_index(level=0, names="view")
+        .reset_index(drop=True)
+    )
+    r2 = model.get_r2("term")
+    annotations = pd.concat(
+        {view_name: vannot.sum(axis=0) for view_name, vannot in model.get_annotations().items()}, axis=0
+    ).rename_axis(index=("view", "annotation"))
     factor_order = model.factor_names[model.factor_order]
 
-    combined_df = []
-    for group in groups:
-        r2_df = r2[group]
-        for view_name, view_pcgse in pcgse_results.items():
-            view_pcgse = (
-                view_pcgse.loc[view_pcgse.groupby("factor")["padj"].idxmin()]
-                .set_index("annotation", drop=False)
-                .assign(r2=r2_df[[view_name]])
-            )
-            view_pcgse.loc[view_pcgse["padj"] > alpha, "sign"] = pd.NA
-
-            view_pcgse["annotation_size"] = annotations[view_name].sum(axis=0)
-            view_pcgse["factor"] = view_pcgse["factor"] + view_pcgse["sign"].map(
-                {"pos": " (+)", "neg": " (-)", pd.NA: ""}
-            )
-            view_pcgse["view"] = view_name
-            view_pcgse["group"] = group
-
-            view_factor_order = factor_order[np.isin(factor_order, view_pcgse.index)]
-            view_pcgse = view_pcgse.loc[
-                view_factor_order[slice(n_factors) if n_factors is not None else slice(None)], :
-            ]
-            combined_df.append(view_pcgse)
-
-    combined_df = pd.concat(combined_df, ignore_index=True).assign(
-        factor=lambda x: pd.Categorical(x.factor, categories=x.factor.unique())
+    combined_df = (
+        pcgse_results.loc[pcgse_results.groupby(["view", "annotation"])["padj"].idxmin()]
+        .merge(r2, left_on=["view", "factor"], right_on=["view", "component"])
+        .set_index(["view", "annotation"])
+        .drop(columns="component")
+        .assign(
+            sign=lambda x: np.where(x["padj"] > alpha, pd.NA, x["sign"]),
+            factor=lambda x: x["factor"] + x["sign"].map({"pos": " (+)", "neg": " (-)", pd.NA: ""}),
+            annotation_size=annotations,
+        )
+        .reset_index(level=0)
+        .groupby("view")
+        .apply(
+            lambda df: df.loc[
+                factor_order[np.isin(factor_order, df.index)][
+                    slice(n_factors) if n_factors is not None else slice(None)
+                ],
+                :,
+            ],
+            include_groups=False,
+        )
+        .assign(factor=lambda x: pd.Categorical(x["factor"], categories=x["factor"].unique()))
+        .reset_index()
     )
 
     combined_scatter = (
-        p9.ggplot(combined_df, p9.aes(x="r2", y="factor", fill="-np.log10(padj)", size="annotation_size"))
+        p9.ggplot(combined_df, p9.aes(x="R2", y="factor", fill="-np.log10(padj)", size="annotation_size"))
         + p9.geom_point()
         + p9.scale_fill_distiller(palette="OrRd", limits=(0, 10), oob=bounds.squish)
         + p9.labs(x="$R^2$", y="Factor", fill="$-\\log_{10}(\\text{FDR})$", size="No. features\nin annotation")
@@ -500,7 +521,7 @@ def factor_significance(
 
 
 def all_weights(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     views: str | Sequence[str] | None = None,
     clip: tuple[float, float] | None = (-1, 1),
     show_featurenames: bool = False,
@@ -509,7 +530,7 @@ def all_weights(
     """Plot the weight matrices.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         views: The views to consider in the ranking. If `None`, plot all views.
         clip: Weight value range to clip to.
         show_featurenames: Whether to show the feature names on the Y axis.
@@ -549,7 +570,7 @@ def all_weights(
 
 
 def factor(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     factor: int | str = 1,
     show_samplenames: bool = False,
     figsize: tuple[float, float] | None = None,  # F821
@@ -557,7 +578,7 @@ def factor(
     """Plot factor values (y-axis) for each sample (x-axis).
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         factor: The factor to plot.
         show_samplenames: Whether to show the feature names on the X axis.
         figsize: Figure size in inches.
@@ -608,7 +629,7 @@ def _check_covariate(cov, group_name, covars):
 
 
 def _plot_factors_covariate(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     covariate1: str | int,
     covariate2: str | int | None = None,
     gp: bool = False,
@@ -618,7 +639,7 @@ def _plot_factors_covariate(
     """Plot every factor against one or two covariates.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         covariate1: The first covariate to plot against. Can be an integer index or the covariate name, if the covariates are named.
         covariate2: The first covariate to plot against. Can be an integer index or the covariate name, if the covariates are named.
             If `None`, only one covariate will be plotted.
@@ -678,7 +699,7 @@ def _plot_factors_covariate(
 
 
 def factors_covariate(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     covariate1: str | int,
     covariate2: str | int | None = None,
     size: int = 1,
@@ -687,7 +708,7 @@ def factors_covariate(
     """Plot every factor against one or two covariates.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         covariate1: The first covariate to plot against. Can be an integer index or the covariate name, if the covariates are named.
         covariate2: The first covariate to plot against. Can be an integer index or the covariate name, if the covariates are named.
             If `None`, only one covariate will be plotted.
@@ -698,7 +719,7 @@ def factors_covariate(
 
 
 def gp_covariate(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     ci_opacity: float = 0.3,
     group: Literal["facet", "color"] = "facet",
     color: str = "black",
@@ -711,7 +732,7 @@ def gp_covariate(
     If the model covariates are 1D, plot the covariate on X and the GP posterior mean and 95% confidence interval on Y.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         ci_opacity: Opacity of the 95% CI band. Only relevant for 1D covariates.
         group: Whether to encode the sample groups by color or by faceting. Only relevant for 1D covariates.
         color: Color of the line and CI and. Only relevant for 1D covariates and `group="facet"`.
@@ -786,11 +807,11 @@ def gp_covariate(
     return plt
 
 
-def smoothness(model: MOFAFLEX, figsize: tuple[float, float] = (3, 3)) -> p9.ggplot:
+def smoothness(model: types.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = (3, 3)) -> p9.ggplot:
     """Plot the smoothness of the GP for each factor.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         figsize: Figure size in inches.
     """
     scale = model.gp_scale
@@ -810,7 +831,7 @@ def smoothness(model: MOFAFLEX, figsize: tuple[float, float] = (3, 3)) -> p9.ggp
 
 
 def _prepare_weights_df(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     n_features: int = 10,
     views: str | Sequence[str] | None = None,
     factors: int | str | Sequence[int] | Sequence[str] | None = None,
@@ -877,7 +898,7 @@ _weights_inferred_color_scale = p9.scale_color_manual(
 
 
 def top_weights(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     n_features: int = 10,
     views: str | Sequence[str] | None = None,
     factors: int | str | Sequence[int] | Sequence[str] | None = None,
@@ -888,7 +909,7 @@ def top_weights(
     """Plot the top weights for a given factor and view.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         n_features: Number of top features to plot.
         views: The views to consider in the ranking. If `None`, plot all views.
         factors: The factors to plot. If `None`, plot all factors.
@@ -933,7 +954,7 @@ def top_weights(
 
 
 def weights(
-    model: MOFAFLEX,
+    model: types.MofaFlex | MOFAFLEX,
     n_features: int = 10,
     views: str | Sequence[str] | None = None,
     factors: int | str | Sequence[int] | Sequence[str] | None = None,
@@ -945,7 +966,7 @@ def weights(
     """Plot the weights for a given factor and view.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         n_features: Number of top features to annotate.
         views: The views to consider in the ranking. If `None`, use all views.
         factors: The factors to plot. If `None`, plot all factors.
@@ -1036,7 +1057,9 @@ def _plot_sparse_probabilities_histogram(
     return plot
 
 
-def weight_sparsity_histogram(model: MOFAFLEX, bins: int = 50, nrow: int | None = None, ncol: int | None = None):
+def weight_sparsity_histogram(
+    model: types.MofaFlex | MOFAFLEX, bins: int = 50, nrow: int | None = None, ncol: int | None = None
+):
     """Plot a histogram of probabilities that weights are non-zero for views with SnS prior.
 
     The spike-and-slab prior is a mixture distribution of a Normal distribution with a
@@ -1044,7 +1067,7 @@ def weight_sparsity_histogram(model: MOFAFLEX, bins: int = 50, nrow: int | None 
     the posterior probability of the Normal mixture compoonent.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         bins: Number of histogram bins.
         nrow: Number of rows in the faceted plot. If None, plotnine will determine automatically.
         ncol: Number of columns in the faceted plot. If None, plotnine will determine automatically.
@@ -1054,7 +1077,9 @@ def weight_sparsity_histogram(model: MOFAFLEX, bins: int = 50, nrow: int | None 
     )
 
 
-def factor_sparsity_histogram(model: MOFAFLEX, bins: int = 50, nrow: int | None = None, ncol: int | None = None):
+def factor_sparsity_histogram(
+    model: types.Mofaflex | MOFAFLEX, bins: int = 50, nrow: int | None = None, ncol: int | None = None
+):
     """Plot a histogram of probabilities that factors are non-zero for views with SnS prior.
 
     The spike-and-slab prior is a mixture distribution of a Normal distribution with a
@@ -1062,7 +1087,7 @@ def factor_sparsity_histogram(model: MOFAFLEX, bins: int = 50, nrow: int | None 
     the posterior probability of the Normal mixture compoonent.
 
     Args:
-        model: The MOFA-FLEX model.
+        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         bins: Number of histogram bins.
         nrow: Number of rows in the faceted plot. If None, plotnine will determine automatically.
         ncol: Number of columns in the faceted plot. If None, plotnine will determine automatically.

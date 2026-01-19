@@ -373,8 +373,9 @@ class MuDataDataset(MofaFlexDataset):
         axis: int,
         key: Mapping[str, str],
         mkey: Mapping[str, str],
+        filter_names: Sequence[str] | None,
         fill_value: Callable[[np.dtype | pd.api.extensions.ExtensionDtype], Union[*np.ScalarType]],
-    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
+    ) -> dict[str, dict[str, pd.DataFrame]]:
         if axis == 0:
             attr = "obs"
             dict_reorder = slice(None)
@@ -388,7 +389,11 @@ class MuDataDataset(MofaFlexDataset):
         covariates = defaultdict(dict)
         covar_dims = defaultdict(set)
         for group_name, group_idx in self._groups.items():
+            if axis == 0 and filter_names is not None and group_name not in filter_names:
+                continue
             for modname in self.view_names:
+                if axis == 1 and filter_names is not None and modname not in filter_names:
+                    continue
                 subdata = self._data[group_idx, self.feature_names[modname]]
                 mod = subdata.mod[modname]
                 outer_key, inner_key = (group_name, modname)[dict_reorder]
@@ -401,8 +406,8 @@ class MuDataDataset(MofaFlexDataset):
                 if ckey and cmkey:
                     raise ValueError(f"Provide either key or mkey for {outer_msg} {outer_key}, not both.")
 
+                ccov = None
                 if ckey is not None:
-                    ccov = None
                     if ckey in getattr(mod, attr).columns:
                         ccov = align_dataframe(getattr(mod, attr)[[ckey]], getattr(subdata, attrnames))
                     elif ckey in getattr(subdata, attr).columns:
@@ -476,20 +481,27 @@ class MuDataDataset(MofaFlexDataset):
         return ret
 
     def _apply_by_group_view(
-        self, func: ApplyCallable[T], gvkwargs: Mapping[str, Mapping[str, Mapping[str, Any]]], **kwargs
+        self,
+        func: ApplyCallable[T],
+        group_names: Sequence[str],
+        view_names: Sequence[str],
+        gvkwargs: Mapping[str, Mapping[str, Mapping[str, Any]]],
+        **kwargs,
     ) -> dict[str, dict[str, T]]:
         data = self._data_for_apply()
         ret = {}
-        for group_name, group_idx in self._groups.items():
+        for group_name in group_names:
+            group_idx = self._groups[group_name]
             cret = {}
-            for modname, mod in data[group_idx, :].mod.items():
-                ccret = func(mod, group_name, modname, **kwargs, **gvkwargs[group_name][modname])
+            subdata = data[group_idx, :]
+            for modname in view_names:
+                ccret = func(subdata.mod[modname], group_name, modname, **kwargs, **gvkwargs[group_name][modname])
                 cret[modname] = apply_to_nested(ccret, from_dask)
             ret[group_name] = cret
         return ret
 
     def _apply_by_view(
-        self, func: ApplyCallable[T], vkwargs: Mapping[str, Mapping[str, Any]], **kwargs
+        self, func: ApplyCallable[T], view_names: Sequence[str], vkwargs: Mapping[str, Mapping[str, Any]], **kwargs
     ) -> dict[str, T]:
         data = self._data
         if (
@@ -505,7 +517,8 @@ class MuDataDataset(MofaFlexDataset):
             else:
                 warn_dask(_logger)
         ret = {}
-        for modname, mod in data.mod.items():
+        for modname in view_names:
+            mod = data.mod[modname]
             groups = np.empty((mod.n_obs,), dtype="O")
             for group, group_idx in self._groups.items():
                 modidx = self._data.obsmap[modname][group_idx]
@@ -517,11 +530,12 @@ class MuDataDataset(MofaFlexDataset):
         return ret
 
     def _apply_by_group(
-        self, func: ApplyCallable[T], gkwargs: Mapping[str, Mapping[str, Any]], **kwargs
+        self, func: ApplyCallable[T], group_names: Sequence[str], gkwargs: Mapping[str, Mapping[str, Any]], **kwargs
     ) -> dict[str, T]:
         data = self._data_for_apply()
         ret = {}
-        for group_name, group_idx in self._groups.items():
+        for group_name in group_names:
+            group_idx = self._groups[group_name]
             subdata = data[group_idx, :]
             gdata = {}
             convert = False

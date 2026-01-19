@@ -1,7 +1,6 @@
-import inspect
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from types import FunctionType, MethodType
 from typing import Any, Concatenate, Literal, TypeAlias, TypeVar, Union
 
@@ -11,6 +10,8 @@ from anndata import AnnData
 from numpy.typing import NDArray
 from scipy.sparse import sparray, spmatrix
 from torch.utils.data import Dataset
+
+from ..utils import checked_baseclass
 
 T = TypeVar("T")
 ApplyCallable: TypeAlias = Callable[Concatenate[AnnData, str, str, ...], T]
@@ -46,6 +47,7 @@ class Preprocessor:
         return arr, nonmissing_samples, nonmissing_features
 
 
+@checked_baseclass(required_init_kwargs=("sample_names", "feature_names"), required_init_kkwargs=True, registry="set")
 class MofaFlexDataset(Dataset, ABC):
     """Base class for MOFA-FLEX datasets, compatible with the PyTorch dataloader interface.
 
@@ -82,8 +84,6 @@ class MofaFlexDataset(Dataset, ABC):
         cast_to: Data type to cast the data to. If `None`, no casting shall be performed.
     """
 
-    _subclasses = set()
-
     def __init__(
         self,
         data,
@@ -97,19 +97,10 @@ class MofaFlexDataset(Dataset, ABC):
         self.preprocessor = preprocessor
         self._cast_to = cast_to
 
-    def __init_subclass__(cls, **kwargs):
-        init_sig = inspect.signature(cls.__init__)
-        for arg in ("kwargs", "sample_names", "feature_names"):
-            if arg not in init_sig.parameters:
-                raise TypeError(f"Constructor of class {cls} is missing the {arg} argument.")
-
-        super().__init_subclass__(**kwargs)
-        __class__._subclasses.add(cls)
-
     def __new__(cls, data, *args, **kwargs):
         if cls != __class__:
             return super().__new__(cls)
-        for subcls in __class__._subclasses:
+        for subcls in __class__._registry:
             if subcls._accepts_input(data):
                 return subcls.__new__(subcls, data, *args, **kwargs)
         raise NotImplementedError("Input data type not recognized.")
@@ -155,6 +146,11 @@ class MofaFlexDataset(Dataset, ABC):
     def n_samples_total(self) -> int:
         """Total number of samples."""
         return sum(self.n_samples.values())
+
+    @property
+    def n_features_total(self) -> int:
+        """Total number of features."""
+        return sum(self.n_features.values())
 
     @property
     @abstractmethod
@@ -311,6 +307,7 @@ class MofaFlexDataset(Dataset, ABC):
         axis: Literal[0, 1, "samples", "features"],
         key: str | dict[str, str] | None = None,
         mkey: str | dict[str, str] | None = None,
+        filter_names: str | Sequence[str] | None = None,
         fill_value: Callable[[np.dtype | pd.api.extensions.ExtensionDtype], Union[*np.ScalarType]] = lambda _: pd.NA,
     ) -> dict[str, dict[str, pd.DataFrame]]:
         """Get the covariates for each group (if axis in (0, "samples")) or view (if axis in (1, "features")).
@@ -319,6 +316,7 @@ class MofaFlexDataset(Dataset, ABC):
             axis: The covariate axis
             key: Column in `.obs` or `.var` for each group/view containing the covariate.
             mkey: Key in `.obsm` or `.varm` for each group/view containing the covariates.
+            filter_names: List of groups (for `axis==0`) or views (for `axis==1`) to include. If `None`, will include all groups/views.
             fill_value: Function returning the alignment fill value (see `align_local_array_to_global`) for a given array dtype.
         """
         if axis in (0, "samples"):
@@ -336,7 +334,9 @@ class MofaFlexDataset(Dataset, ABC):
             mkey = {}
         elif isinstance(mkey, str):
             mkey = dict.fromkeys(names, mkey)
-        return self._get_covariates(axis, key, mkey, fill_value)
+        if isinstance(filter_names, str):
+            filter_names = (filter_names,)
+        return self._get_covariates(axis, key, mkey, filter_names, fill_value)
 
     @abstractmethod
     def _get_covariates(
@@ -344,8 +344,9 @@ class MofaFlexDataset(Dataset, ABC):
         axis: int,
         key: Mapping[str, str],
         mkey: Mapping[str, str],
+        filter_names: Sequence[str] | None,
         fill_value: Callable[[np.dtype], Union[*np.ScalarType]],
-    ) -> tuple[dict[str, dict[str, NDArray]], dict[str, NDArray]]:
+    ) -> dict[str, dict[str, pd.DataFrame]]:
         """Get the covariates for each group/view.
 
         This method is called by `get_covariates`.
@@ -360,6 +361,8 @@ class MofaFlexDataset(Dataset, ABC):
         group_kwargs: dict[str, dict[str, Any]] | None = None,
         view_kwargs: dict[str, dict[str, Any]] | None = None,
         group_view_kwargs: dict[str, dict[str, dict[str, Any]]] | None = None,
+        filter_groups: Sequence[str] | str | None = None,
+        filter_views: Sequence[str] | str | None = None,
         **kwargs,
     ) -> dict[str, dict[str, T]] | dict[str, T]:
         """Apply a function to each group and/or view.
@@ -394,6 +397,8 @@ class MofaFlexDataset(Dataset, ABC):
                 argument name as key, the first inner dict has groups as keys and the second inner dict has views as keys. If a group is missing
                 from the outer dict or a view is missing from the inner dict, `None` will be used as the value of that argument for all views
                 in the group or for the view, respectively. Ignored if `by_group=False`.
+            filter_groups: List of groups to apply to. Ignored if `by_group=False` and `by_view=True`. Defaults to all groups.
+            filter_views: List of views to apply to. Ignored if `by_group=True`` and `by_view=False`. Defaults to all views
             **kwargs: Additional arguments to pass to `func`.
 
         Returns:
@@ -417,38 +422,47 @@ class MofaFlexDataset(Dataset, ABC):
         elif not by_group:
             raise ValueError("You cannot specify group_view_kwargs with `by_group=False`.")
 
+        if isinstance(filter_groups, str):
+            filter_groups = (filter_groups,)
+        if isinstance(filter_views, str):
+            filter_views = (filter_views,)
         func = self._inject_alignment_functions(func)
         if by_group and by_view:
+            group_names = set(self.group_names) & set(filter_groups) if filter_groups is not None else self.group_names
+            view_names = set(self.view_names) & set(filter_views) if filter_views is not None else self.view_names
             ckwargs = defaultdict(lambda: defaultdict(dict))
 
             for argname, gkwargs in group_kwargs.items():
-                for group_name in self.group_names:
-                    for view_name in self.view_names:
+                for group_name in group_names:
+                    for view_name in view_names:
                         ckwargs[group_name][view_name][argname] = gkwargs.get(group_name, None)
 
             for argname, vkwargs in view_kwargs.items():
-                for group_name in self.group_names:
-                    for view_name in self.view_names:
+                for group_name in group_names:
+                    for view_name in view_names:
                         ckwargs[group_name][view_name][argname] = vkwargs.get(view_name, None)
 
             for argname, gvkwargs in group_view_kwargs.items():
-                for group_name in self.group_names:
+                for group_name in group_names:
                     gkwargs = gvkwargs.get(group_name, {})
-                    for view_name in self.view_names:
+                    for view_name in view_names:
                         ckwargs[group_name][view_name][argname] = gkwargs.get(view_name, None)
 
-            return self._apply_by_group_view(func, ckwargs, **kwargs)
+            return self._apply_by_group_view(func, group_names, view_names, ckwargs, **kwargs)
         else:
             argsdict = group_kwargs if by_group else view_kwargs
-            attr = "group_names" if by_group else "view_names"
+            if by_group:
+                names = set(self.group_names) & set(filter_groups) if filter_groups is not None else self.group_names
+            else:
+                names = set(self.view_names) & set(filter_views) if filter_views is not None else self.view_names
             ckwargs = defaultdict(dict)
             for argname, vkwargs in argsdict.items():
-                for name in getattr(self, attr):
+                for name in names:
                     ckwargs[name][argname] = vkwargs.get(name, None)
             return (
-                self._apply_by_group(func, ckwargs, **kwargs)
+                self._apply_by_group(func, names, ckwargs, **kwargs)
                 if by_group
-                else self._apply_by_view(func, ckwargs, **kwargs)
+                else self._apply_by_view(func, names, ckwargs, **kwargs)
             )
 
     def apply_to_view(
@@ -538,16 +552,25 @@ class MofaFlexDataset(Dataset, ABC):
         pass
 
     @abstractmethod
-    def _apply_by_group(self, func: ApplyCallable[T], gvkwargs: dict[str, dict[str, Any]], **kwargs) -> dict[str, T]:
+    def _apply_by_group(
+        self, func: ApplyCallable[T], group_names: Sequence[str], gvkwargs: dict[str, dict[str, Any]], **kwargs
+    ) -> dict[str, T]:
         pass
 
     @abstractmethod
-    def _apply_by_view(self, func: ApplyCallable[T], gkwargs: dict[str, dict[str, Any]], **kwargs) -> dict[str, T]:
+    def _apply_by_view(
+        self, func: ApplyCallable[T], view_names: Sequence[str], gkwargs: dict[str, dict[str, Any]], **kwargs
+    ) -> dict[str, T]:
         pass
 
     @abstractmethod
     def _apply_by_group_view(
-        self, func: ApplyCallable[T], vkwargs: dict[str, dict[str, dict[str, Any]]], **kwargs
+        self,
+        func: ApplyCallable[T],
+        group_names: Sequence[str],
+        view_names: Sequence[str],
+        vkwargs: dict[str, dict[str, dict[str, Any]]],
+        **kwargs,
     ) -> dict[str, dict[str, T]]:
         pass
 

@@ -6,9 +6,12 @@
 
 # -- Path setup --------------------------------------------------------------
 import sys
+import os
 from datetime import datetime
 from importlib.metadata import metadata
 from pathlib import Path
+
+os.environ["MOFAFLEX_DOCS"] = "1"
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE / "extensions"))
@@ -90,7 +93,7 @@ intersphinx_mapping = {
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pandas": ("https://pandas.pydata.org/docs/", None),
     "plotnine": ("https://plotnine.org/", None),
-    "pytorch": ("https://pytorch.org/docs/stable/", None),
+    "pytorch": ("https://docs.pytorch.org/docs/stable/", None),
     "muon-tutorials": ("https://muon-tutorials.readthedocs.io/en/latest", None),
 }
 
