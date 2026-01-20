@@ -6,11 +6,6 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+**"
   workflow_dispatch:
 
-defaults:
-  run:
-    # to fail on error in multiline statements (-e), in pipes (-o pipefail), and on unset variables (-u).
-    shell: bash -euo pipefail {0}
-
 # Use "trusted publishing", see https://docs.pypi.org/trusted-publishers/
 jobs:
   release:
