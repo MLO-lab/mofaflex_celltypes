@@ -90,7 +90,7 @@ class MOFAFLEX:
         if not isinstance(other, __class__):
             return NotImplemented
         if hasattr(self, "_model") or hasattr(other, "_model"):
-            raise ValueError("Can not add terms to an already trained model.")
+            raise ValueError("Cannot add terms to an already trained model.")
         if len(intersection := self._terms.keys() & other._terms.keys()) > 0:
             raise ValueError(
                 f"Operands must have unique term names, but terms {', '.join(intersection)} were found in both operands."

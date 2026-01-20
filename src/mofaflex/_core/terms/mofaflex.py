@@ -568,23 +568,23 @@ class MofaFlex(Term):
         return guiding_var_plate, guiding_var_coefficients_plate, guiding_var_categories_plates, factors_plate
 
     def _model_guiding_vars_weights_normal(
-        self, guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates, **kwargs
+        self, id, guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates, **kwargs
     ):
         weights_dim = self._guiding_vars_weights_dims[guiding_var_name]
         with guiding_var_categories_plates[guiding_var_name], guiding_var_coefficients_plate:
             return pyro.sample(
-                f"guiding_vars_w_{guiding_var_name}",
+                f"{id}_guiding_vars_w_{guiding_var_name}",
                 dist.Normal(
                     torch.zeros(weights_dim, 2), torch.ones(weights_dim, 2)
                 ),  # .to_event(2)  # (categories, intercept & slope)
             )
 
     def _guide_guiding_vars_weights_normal(
-        self, guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates, **kwargs
+        self, id, guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates, **kwargs
     ):
         with guiding_var_categories_plates[guiding_var_name], guiding_var_coefficients_plate:
             return pyro.sample(
-                f"guiding_vars_w_{guiding_var_name}",
+                f"{id}_guiding_vars_w_{guiding_var_name}",
                 dist.Normal(self._guiding_locs[guiding_var_name], self._guiding_scales[guiding_var_name]),
             )
 
@@ -636,7 +636,7 @@ class MofaFlex(Term):
             self._guiding_vars_names, self._guiding_vars_factors, strict=True
         ):
             w_guiding = self._model_guiding_vars_weights_normal(
-                f"{id}_{guiding_var_name}", guiding_var_coefficients_plate, guiding_var_categories_plates
+                id, guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates
             )
 
             for group_name, guiding_var in guiding_vars[guiding_var_name].items():
@@ -689,7 +689,7 @@ class MofaFlex(Term):
         if self.n_guided_factors > 0:
             for guiding_var_name, guiding_var in guiding_vars.items():
                 self._guide_guiding_vars_weights_normal(
-                    f"{id}_{guiding_var_name}", guiding_var_coefficients_plate, guiding_var_categories_plates
+                    id, guiding_var_name, guiding_var_coefficients_plate, guiding_var_categories_plates
                 )
                 for group_name in guiding_var.keys():
                     self._pyro_guiding_vars_likelihoods[guiding_var_name].guide(
