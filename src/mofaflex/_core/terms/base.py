@@ -104,10 +104,11 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
     @abstractmethod
     def model(
         self,
+        id: str,
         sample_plates: Mapping[str, pyro.plate],
         feature_plates: Mapping[str, pyro.plate],
         nonmissing_samples: Mapping[str, Mapping[str, torch.Tensor | slice]],
-        nonmissing_features: Mapping[str, Mapping[str, torch.Tensor | None]],
+        nonmissing_features: Mapping[str, Mapping[str, torch.Tensor | slice]],
         **kwargs,
     ):
         """Pyro model for the term.
@@ -116,6 +117,7 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
         the model's overall observation model. Importantly, it must not assume it is the only term.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple additive terms are used.
             sample_plates: Pyro plates for the samples.
             feature_plates: Pyro plates for the features.
             nonmissing_samples: Index tensors indicating which global sample indices of the current minibatch are present
@@ -128,12 +130,19 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
 
     @pyro_method
     @abstractmethod
-    def guide(self, nonmissing_samples, nonmissing_features, **kwargs):
+    def guide(
+        self,
+        id: str,
+        nonmissing_samples: Mapping[str, Mapping[str, torch.Tensor | slice]],
+        nonmissing_features: Mapping[str, Mapping[str, torch.Tensor | slice]],
+        **kwargs,
+    ):
         """Pyro guide for the term.
 
         This method defines the variational distribution for all latent variables associated with the term.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple additive terms are used.
             sample_plates: Pyro plates for the samples.
             feature_plates: Pyro plates for the features.
             nonmissing_samples: Index tensors indicating which global sample indices of the current minibatch are present

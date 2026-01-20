@@ -335,6 +335,7 @@ class GaussianProcess(Prior):
     @pyro_method
     def model(
         self,
+        id: str,
         factor_plate: pyro.plate,
         nonfactor_plates: Mapping[str, pyro.plate],
         gp_covariates: dict[str, torch.Tensor],
@@ -343,11 +344,11 @@ class GaussianProcess(Prior):
         gnames = list(filter(lambda x: x in gp_covariates, self._names))
         covars = torch.cat(tuple(gp_covariates[g] for g in gnames), dim=0)
         idx = torch.cat(tuple(self._idx[g].expand(gp_covariates[g].shape[0]) for g in gnames), dim=0)
-        f_dist = self._gp.pyro_model((idx[..., None], covars), name_prefix="gp")
+        f_dist = self._gp.pyro_model((idx[..., None], covars), name_prefix=f"{id}_gp")
 
         nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
-        with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
-            f = pyro.sample("gp.f", f_dist)
+        with pyro.plate(f"{id}_gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
+            f = pyro.sample(f"{id}_gp.f", f_dist)
         new_f_shape = list(f.shape)
         new_f_shape[-len(self._full_gp_shape) :] = self._full_gp_shape
         f = f.reshape(new_f_shape)
@@ -361,7 +362,7 @@ class GaussianProcess(Prior):
                 zip(
                     self._names,
                     torch.split(
-                        pyro.sample("z", dist.Normal(f, 1 - outputscale)),
+                        pyro.sample(f"{id}_z", dist.Normal(f, 1 - outputscale)),
                         tuple(gp_covariates[g].shape[0] for g in gnames),
                         dim=self._nonfactor_dim,
                     ),
@@ -372,6 +373,7 @@ class GaussianProcess(Prior):
     @pyro_method
     def guide(
         self,
+        id: str,
         factor_plate: pyro.plate,
         nonfactor_plates: Mapping[str, pyro.plate],
         gp_covariates: dict[str, torch.Tensor],
@@ -380,11 +382,11 @@ class GaussianProcess(Prior):
         gnames = list(filter(lambda x: x in gp_covariates, self._names))
         covars = torch.cat(tuple(gp_covariates[g] for g in gnames), dim=0)
         idx = torch.cat(tuple(self._idx[g].expand(gp_covariates[g].shape[0]) for g in gnames), dim=0)
-        f_dist = self._gp.pyro_guide((idx[..., None], covars), name_prefix="gp")
+        f_dist = self._gp.pyro_guide((idx[..., None], covars), name_prefix=f"{id}_gp")
 
         nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
-        with pyro.plate("gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
-            pyro.sample("gp.f", f_dist)
+        with pyro.plate(f"{id}_gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
+            pyro.sample(f"{id}_gp.f", f_dist)
 
         with factor_plate, nonfactor_plate as index:
             return dict(
@@ -392,7 +394,7 @@ class GaussianProcess(Prior):
                     self._names,
                     torch.split(
                         pyro.sample(
-                            "z",
+                            f"{id}_z",
                             dist.Normal(
                                 self._loc.index_select(nonfactor_plate.dim, index),
                                 self._scale.index_select(nonfactor_plate.dim, index),

@@ -29,6 +29,7 @@ class Bernoulli(Likelihood):
 
     def _model(
         self,
+        id: str,
         estimate: torch.Tensor,
         group_name: str,
         sample_plate: pyro.plate,
@@ -40,5 +41,5 @@ class Bernoulli(Likelihood):
             estimate = estimate + self._shift[group_name][feature_plate.indices[nonmissing_features]]
         return dist.Bernoulli(logits=estimate)
 
-    def _guide(self, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
+    def _guide(self, id: str, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
         pass

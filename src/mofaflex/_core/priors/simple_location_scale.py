@@ -41,14 +41,18 @@ class _SimpleLocationScale(Prior):
             self._locs[name] = PyroParam(loc)
             self._scales[name] = PyroParam(scale, constraint=constraints.softplus_positive)
 
-    def _model(self, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs) -> torch.Tensor:
+    def _model(
+        self, id: str, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs
+    ) -> torch.Tensor:
         with factor_plate, nonfactor_plate:
-            return pyro.sample(f"z_{name}", self._prior_dist(torch.zeros((1,)), torch.ones((1,))))
+            return pyro.sample(f"{id}_z_{name}", self._prior_dist(torch.zeros((1,)), torch.ones((1,))))
 
-    def _guide(self, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs) -> torch.Tensor:
+    def _guide(
+        self, id: str, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs
+    ) -> torch.Tensor:
         with factor_plate, nonfactor_plate as index:
             return pyro.sample(
-                f"z_{name}",
+                f"{id}_z_{name}",
                 pyro.distributions.Normal(
                     self._locs[name].index_select(nonfactor_plate.dim, index),
                     self._scales[name].index_select(nonfactor_plate.dim, index),

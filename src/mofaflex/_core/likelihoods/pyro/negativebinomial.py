@@ -42,6 +42,7 @@ class NegativeBinomial(LikelihoodWithDispersion):
     @pyro_method
     def _model(
         self,
+        id: str,
         estimate: torch.Tensor,
         group_name: str,
         sample_plate: pyro.plate,
@@ -50,7 +51,7 @@ class NegativeBinomial(LikelihoodWithDispersion):
         nonmissing_features: torch.Tensor | slice,
     ) -> pyro.distributions.Distribution:
         dispersion = self._model_dispersion(
-            estimate, group_name, sample_plate, feature_plate, nonmissing_samples, nonmissing_features
+            id, estimate, group_name, sample_plate, feature_plate, nonmissing_samples, nonmissing_features
         )
         if self._shift is not None:
             estimate = estimate + self._shift[group_name][feature_plate.indices[nonmissing_features]]

@@ -89,7 +89,7 @@ class MOFAFLEX:
     def __add__(self, other: "MOFAFLEX"):
         if not isinstance(other, __class__):
             return NotImplemented
-        if self._model is not None or other._model is not None:
+        if hasattr(self, "_model") or hasattr(other, "_model"):
             raise ValueError("Can not add terms to an already trained model.")
         if len(intersection := self._terms.keys() & other._terms.keys()) > 0:
             raise ValueError(

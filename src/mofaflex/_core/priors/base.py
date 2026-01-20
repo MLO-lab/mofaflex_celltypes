@@ -311,11 +311,13 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
 
     @pyro_method
     def model(
-        self, factor_plate: pyro.plate, nonfactor_plates: Mapping[str, pyro.plate], **kwargs
+        self, id: str, factor_plate: pyro.plate, nonfactor_plates: Mapping[str, pyro.plate], **kwargs
     ) -> dict[str, torch.Tensor]:
         """Pyro model for the prior.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple priors of the same class or multiple
+                additive terms are used.
             factor_plate: Pyro plate for the factors.
             nonfactor_plates: Pyro plates for the nonfactors (samples or features) for all groups/views.
             **kwargs: Additional arguments that may only be relevant for particular subclasses.
@@ -323,12 +325,16 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
         Returns:
             A dict of sampled tensors for each group/view.
         """
-        return {name: self._model(name, factor_plate, nonfactor_plates[name], **kwargs) for name in self._names}
+        return {name: self._model(id, name, factor_plate, nonfactor_plates[name], **kwargs) for name in self._names}
 
-    def _model(self, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs) -> torch.Tensor:
+    def _model(
+        self, id: str, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs
+    ) -> torch.Tensor:
         """Pyro model for the prior.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple priors of the same class or multiple
+                additive terms are used.
             name: The name of the current group/view.
             factor_plate: Pyro plate for the factors.
             nonfactor_plate: Pyro plate for the nonfactors (samples or features).
@@ -338,11 +344,13 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
 
     @pyro_method
     def guide(
-        self, factor_plate: Mapping[str, pyro.plate], nonfactor_plates: Mapping[str, pyro.plate], **kwargs
+        self, id: str, factor_plate: Mapping[str, pyro.plate], nonfactor_plates: Mapping[str, pyro.plate], **kwargs
     ) -> dict[str, torch.Tensor]:
         """Pyro guide for the prior.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple priors of the same class or multiple
+                additive terms are used.
             factor_plate: Pyro plate for the factors.
             nonfactor_plates: Pyro plates for the nonfactors (samples or features) for all groups/views.
             **kwargs: Additional arguments that may only be relevant for particular subclasses.
@@ -350,12 +358,16 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
         Returns:
             A dict of sampled tensors for each group/view.
         """
-        return {name: self._guide(name, factor_plate, nonfactor_plates[name], **kwargs) for name in self._names}
+        return {name: self._guide(id, name, factor_plate, nonfactor_plates[name], **kwargs) for name in self._names}
 
-    def _guide(self, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs) -> torch.Tensor:
+    def _guide(
+        self, id: str, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs
+    ) -> torch.Tensor:
         """Pyro guide for the prior.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple priors of the same class or multiple
+                additive terms are used.
             name: The name of the current group/view.
             factor_plate: Pyro plate for the factors.
             nonfactor_plate: Pyro plate for the nonfactors (samples or features).

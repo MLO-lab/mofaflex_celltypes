@@ -90,26 +90,33 @@ class SpikeSlab(Prior):
 
             self._probabilities[name] = self._probs[name].squeeze(self._squeezedims).cpu().numpy().T
 
-    def _model(self, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs) -> torch.Tensor:
+    def _model(
+        self, id: str, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs
+    ) -> torch.Tensor:
         with factor_plate:
-            alpha = pyro.sample(f"alpha_z_{name}", dist.Gamma(torch.full((1,), 1e-3), torch.full((1,), 1e-3)))
-            theta = pyro.sample(f"theta_z_{name}", dist.Beta(torch.ones((1,)), torch.ones((1,))))
+            alpha = pyro.sample(f"{id}_alpha_z_{name}", dist.Gamma(torch.full((1,), 1e-3), torch.full((1,), 1e-3)))
+            theta = pyro.sample(f"{id}_theta_z_{name}", dist.Beta(torch.ones((1,)), torch.ones((1,))))
             with nonfactor_plate:
-                s = pyro.sample(f"s_z_{name}", dist.Bernoulli(theta))
-                return pyro.sample(f"z_{name}", dist.Normal(torch.zeros((1,)), 1.0 / (alpha + settings.get("eps")))) * s
+                s = pyro.sample(f"{id}_s_z_{name}", dist.Bernoulli(theta))
+                return (
+                    pyro.sample(f"{id}_z_{name}", dist.Normal(torch.zeros((1,)), 1.0 / (alpha + settings.get("eps"))))
+                    * s
+                )
 
-    def _guide(self, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs) -> torch.Tensor:
+    def _guide(
+        self, id: str, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs
+    ) -> torch.Tensor:
         with factor_plate:
-            pyro.sample(f"alpha_z_{name}", dist.Gamma(self.__shapes[name], self._rates[name]))
-            pyro.sample(f"theta_z_{name}", dist.Beta(self._alphas[name], self._betas[name]))
+            pyro.sample(f"{id}_alpha_z_{name}", dist.Gamma(self.__shapes[name], self._rates[name]))
+            pyro.sample(f"{id}_theta_z_{name}", dist.Beta(self._alphas[name], self._betas[name]))
             with nonfactor_plate as index:
                 pyro.sample(
-                    f"s_z_{name}",
+                    f"{id}_s_z_{name}",
                     ReinMaxBernoulli(temperature=2.0, probs=self._probs[name].index_select(nonfactor_plate.dim, index)),
                 )
 
                 return pyro.sample(
-                    f"z_{name}",
+                    f"{id}_z_{name}",
                     dist.Normal(
                         self._locs[name].index_select(nonfactor_plate.dim, index),
                         self._scales[name].index_select(nonfactor_plate.dim, index),

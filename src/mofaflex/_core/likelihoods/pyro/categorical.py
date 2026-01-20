@@ -13,6 +13,7 @@ class Categorical(Likelihood):
 
     def _model(
         self,
+        id: str,
         estimate: torch.Tensor,
         group_name: str,
         sample_plate: pyro.plate,
@@ -22,5 +23,5 @@ class Categorical(Likelihood):
     ) -> pyro.distributions.Distribution:
         return dist.Categorical(logits=estimate)
 
-    def _guide(self, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
+    def _guide(self, id: str, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
         pass

@@ -153,7 +153,12 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
 
         predictions = [
             term.model(
-                sample_plates, feature_plates, nonmissing_samples, nonmissing_features, **kwargs.get(termname, {})
+                termname,
+                sample_plates,
+                feature_plates,
+                nonmissing_samples,
+                nonmissing_features,
+                **kwargs.get(termname, {}),
             )
             for termname, term in self._terms.items()
         ]
@@ -179,6 +184,7 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
                     vnonmissing_features = gnonmissing_features[view_name]
 
                     self._pyro_likelihoods[view_name].model(
+                        "",
                         data=view,
                         estimate=prediction,
                         group_name=group_name,
@@ -213,7 +219,12 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
         sample_plates, feature_plates = self._get_plates(subsample=sample_idx)
         for termname, term in self._terms.items():
             term.guide(
-                sample_plates, feature_plates, nonmissing_samples, nonmissing_features, **kwargs.get(termname, {})
+                termname,
+                sample_plates,
+                feature_plates,
+                nonmissing_samples,
+                nonmissing_features,
+                **kwargs.get(termname, {}),
             )
 
         for group_name, group in data.items():
@@ -221,7 +232,7 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
                 if view_obs.numel() == 0:
                     continue
                 self._pyro_likelihoods[view_name].guide(
-                    group_name, sample_plates[group_name], feature_plates[view_name]
+                    "", group_name, sample_plates[group_name], feature_plates[view_name]
                 )
 
     def get_lr_func(self, base_lr: float, **kwargs) -> Callable[[str], Mapping[str, Any]]:

@@ -85,43 +85,49 @@ class Horseshoe(Prior):
     def _get_prior_scale(self, name: str, **kwargs):
         return None
 
-    def _model(self, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs) -> torch.Tensor:
-        global_scale = pyro.sample(f"global_scale_z_{name}", dist.HalfCauchy(torch.ones((1,))))
+    def _model(
+        self, id: str, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs
+    ) -> torch.Tensor:
+        global_scale = pyro.sample(f"{id}_global_scale_z_{name}", dist.HalfCauchy(torch.ones((1,))))
         with factor_plate:
-            inter_scale = pyro.sample(f"inter_scale_z_{name}", dist.HalfCauchy(torch.ones((1,))))
+            inter_scale = pyro.sample(f"{id}_inter_scale_z_{name}", dist.HalfCauchy(torch.ones((1,))))
             with nonfactor_plate:
-                local_scale = pyro.sample(f"local_scale_z_{name}", dist.HalfCauchy(torch.ones((1,))))
+                local_scale = pyro.sample(f"{id}_local_scale_z_{name}", dist.HalfCauchy(torch.ones((1,))))
                 local_scale = local_scale * inter_scale * global_scale
                 if self._regularized:
                     caux = pyro.sample(
-                        f"caux_z_{name}", dist.InverseGamma(torch.full((1,), 0.5), torch.full((1,), 0.5))
+                        f"{id}_caux_z_{name}", dist.InverseGamma(torch.full((1,), 0.5), torch.full((1,), 0.5))
                     )
                     c = torch.sqrt(caux)
                     if (prior_scale := self._get_prior_scale(name, **kwargs)) is not None:
                         c = c * prior_scale
                     local_scale = (c * local_scale) / torch.sqrt(c**2 + local_scale**2)
-                return pyro.sample(f"z_{name}", dist.Normal(torch.zeros((1,)), local_scale))
+                return pyro.sample(f"{id}_z_{name}", dist.Normal(torch.zeros((1,)), local_scale))
 
-    def _guide(self, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs) -> torch.Tensor:
+    def _guide(
+        self, id: str, name: str, factor_plate: pyro.plate, nonfactor_plate: pyro.plate, **kwargs
+    ) -> torch.Tensor:
         pyro.sample(
-            f"global_scale_z_{name}", dist.LogNormal(self._global_scale_locs[name], self._global_scale_scales[name])
+            f"{id}_global_scale_z_{name}",
+            dist.LogNormal(self._global_scale_locs[name], self._global_scale_scales[name]),
         )
         with factor_plate:
             pyro.sample(
-                f"inter_scale_z_{name}", dist.LogNormal(self._inter_scale_locs[name], self._inter_scale_scales[name])
+                f"{id}_inter_scale_z_{name}",
+                dist.LogNormal(self._inter_scale_locs[name], self._inter_scale_scales[name]),
             )
             with nonfactor_plate as index:
                 local_scale_loc = self._local_scale_locs[name].index_select(nonfactor_plate.dim, index)
                 local_scale_scale = self._local_scale_scales[name].index_select(nonfactor_plate.dim, index)
-                pyro.sample(f"local_scale_z_{name}", dist.LogNormal(local_scale_loc, local_scale_scale))
+                pyro.sample(f"{id}_local_scale_z_{name}", dist.LogNormal(local_scale_loc, local_scale_scale))
 
                 if self._regularized:
                     caux_loc = self._caux_locs[name].index_select(nonfactor_plate.dim, index)
                     caux_scale = self._caux_scales[name].index_select(nonfactor_plate.dim, index)
-                    pyro.sample(f"caux_z_{name}", dist.LogNormal(caux_loc, caux_scale))
+                    pyro.sample(f"{id}_caux_z_{name}", dist.LogNormal(caux_loc, caux_scale))
 
                 return pyro.sample(
-                    f"z_{name}",
+                    f"{id}_z_{name}",
                     dist.Normal(
                         self._locs[name].index_select(nonfactor_plate.dim, index),
                         self._scales[name].index_select(nonfactor_plate.dim, index),

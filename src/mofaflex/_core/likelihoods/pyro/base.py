@@ -56,6 +56,7 @@ class Likelihood(ABC, PyroModule, metaclass=_PyroMeta):
     @pyro_method
     def model(
         self,
+        id: str,
         data: torch.Tensor,
         estimate: torch.Tensor,
         group_name: str,
@@ -68,6 +69,7 @@ class Likelihood(ABC, PyroModule, metaclass=_PyroMeta):
         """Pyro model for the likelihood.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple instances of the same likelihood are used.
             data: The observed data.
             estimate: The model estimate.
             group_name: The group name.
@@ -85,14 +87,14 @@ class Likelihood(ABC, PyroModule, metaclass=_PyroMeta):
         data = torch.nan_to_num(data, nan=0.0)
 
         nonmissing_sample_plate = pyro.plate(
-            f"samples_{group_name}_{self._view_name}",
+            f"{id}_samples_{group_name}_{self._view_name}",
             sample_plate.size,
             dim=sample_plate.dim,
             subsample=sample_plate.indices[nonmissing_samples],
         )
 
         nonmissing_feature_plate = pyro.plate(
-            f"features_{group_name}_{self._view_name}",
+            f"{id}_features_{group_name}_{self._view_name}",
             feature_plate.size,
             dim=feature_plate.dim,
             subsample=(
@@ -100,7 +102,7 @@ class Likelihood(ABC, PyroModule, metaclass=_PyroMeta):
             ),
         )  # pyro.plate can't handle slices
         obsdist = self._model(
-            estimate, group_name, sample_plate, feature_plate, nonmissing_samples, nonmissing_features
+            id, estimate, group_name, sample_plate, feature_plate, nonmissing_samples, nonmissing_features
         )
         with (
             pyro.poutine.mask(mask=data_mask),
@@ -108,11 +110,12 @@ class Likelihood(ABC, PyroModule, metaclass=_PyroMeta):
             nonmissing_sample_plate,
             nonmissing_feature_plate,
         ):
-            return pyro.sample(f"observed_{group_name}_{self._view_name}", obsdist, obs=data)
+            return pyro.sample(f"{id}_observed_{group_name}_{self._view_name}", obsdist, obs=data)
 
     @abstractmethod
     def _model(
         self,
+        id: str,
         estimate: torch.Tensor,
         group_name: str,
         sample_plate: pyro.plate,
@@ -123,6 +126,7 @@ class Likelihood(ABC, PyroModule, metaclass=_PyroMeta):
         """Pyro model for the likelihood.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple instances of the same likelihood are used.
             estimate: The model estimate.
             group_name: The group name.
             sample_plate: Pyro plate for the samples.
@@ -137,22 +141,24 @@ class Likelihood(ABC, PyroModule, metaclass=_PyroMeta):
         """
         pass
 
-    def guide(self, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
+    def guide(self, id: str, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
         """Pyro guide for the likelhood.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple instances of the same likelihood are used.
             group_name: The group name.
             sample_plate: Pyro plate for the samples.
             feature_plate: Pyro plate for the features.
         """
         self._mode = "guide"
-        return self._guide(group_name, sample_plate, feature_plate)
+        return self._guide(id, group_name, sample_plate, feature_plate)
 
     @abstractmethod
-    def _guide(self, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
+    def _guide(self, id: str, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
         """Pyro guide for the likelhood.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple instances of the same likelihood are used.
             group_name: The group name.
             sample_plate: Pyro plate for the samples.
             feature_plate: Pyro plate for the features.
@@ -216,6 +222,7 @@ class LikelihoodWithDispersion(Likelihood):
     @pyro_method
     def _model_dispersion(
         self,
+        id: str,
         estimate: torch.Tensor,
         group_name: str,
         sample_plate: pyro.plate,
@@ -226,6 +233,7 @@ class LikelihoodWithDispersion(Likelihood):
         """Pyro model for the dispersion.
 
         Args:
+            id: ID to be used in Pyro sample site names to make them unique if multiple instances of the same likelihood are used.
             estimate: The model estimate.
             group_name: The group name.
             scale: Scale for the likelihood of this view.
@@ -244,7 +252,7 @@ class LikelihoodWithDispersion(Likelihood):
         return dispersion.movedim(self._feature_dim, 0)[nonmissing_features, ...].movedim(0, self._feature_dim)
 
     @pyro_method
-    def _guide(self, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
+    def _guide(self, id: str, group_name: str, sample_plate: pyro.plate, feature_plate: pyro.plate):
         """Pyro guide for the dispersion."""
         with feature_plate:
             return self._dispersion
