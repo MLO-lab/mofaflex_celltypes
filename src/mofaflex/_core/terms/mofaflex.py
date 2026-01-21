@@ -123,7 +123,7 @@ class MofaFlex(Term):
         for name, res in results.items():
             fnames = factor_names
             if ordered:
-                factor_order = self.factor_order[factors_subset]
+                factor_order = self.factor_order[factors_subset].copy()
                 factor_order[np.argsort(factor_order)] = np.arange(len(factor_order))
                 res = res[:, factor_order]
                 fnames = fnames[factor_order]
