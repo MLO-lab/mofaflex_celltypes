@@ -310,3 +310,21 @@ def test_imputation(rng, anndata_dict, usedask):
                 dataset.map_local_indices_to_global(slice(None), group_name, view_name, align_to="features"),
             )
             assert np.allclose(orig_X[nonnan], new_X[nonnan])
+
+
+def test_terms(anndata_dict):
+    model = terms.MofaFlex("normal", n_factors=5, weight_prior="Normal") + terms.MofaFlex(
+        "hs", n_factors=4, weight_prior="Horseshoe"
+    )
+    with pytest.raises(ValueError, match="unique term names"):
+        model + terms.MofaFlex("normal", n_factors=5)
+    with pytest.raises(TypeError, match="unsupported operand"):
+        model + 1
+    model.fit(anndata_dict, plot_data_overview=False, max_epochs=2, seed=42, save_path=False)
+    with pytest.raises(ValueError, match="already trained"):
+        model + terms.MofaFlex(n_factors=5)
+    with pytest.raises(AttributeError):
+        model.n_factors  # noqa: B018
+    assert model.terms["normal"].n_factors == 5
+    assert model.terms["hs"].n_factors == 4
+    assert model.terms["normal"].n_samples == model.terms["hs"].n_samples == model.n_samples

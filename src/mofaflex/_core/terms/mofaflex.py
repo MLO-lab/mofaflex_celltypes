@@ -121,13 +121,14 @@ class MofaFlex(Term):
         factor_names = self.factor_names[factors_subset]
         ret = {}
         for name, res in results.items():
+            fnames = factor_names
             if ordered:
                 factor_order = self.factor_order[factors_subset]
-                factor_order = np.argsort(np.argsort(factor_order))
+                factor_order[np.argsort(factor_order)] = np.arange(len(factor_order))
                 res = res[:, factor_order]
-                factor_names = factor_names[factor_order]
+                fnames = fnames[factor_order]
             ret[name] = pd.DataFrame(
-                res, index=self._sample_names[name] if axis == 0 else self._feature_names[name], columns=factor_names
+                res, index=self._sample_names[name] if axis == 0 else self._feature_names[name], columns=fnames
             )
         return ret
 
@@ -863,6 +864,10 @@ def _init_api():
     getters = MofaFlex.get_factors, MofaFlex.get_weights
     getter_sigs = tuple(inspect.signature(getter) for getter in getters)
     getter_params = tuple([param for param in sig.parameters.values() if param.name != "kwargs"] for sig in getter_sigs)
+    getter_ignored_params = (
+        {"self", "results", "moment", "name", "kwargs"},
+        {"self", "results", "moment", "name", "kwargs"},
+    )
     getter_annots = tuple(getter.__annotations__ for getter in getters)
     getter_docs = [getter.__doc__ for getter in getters]
     getter_indents = [" " * get_indentation(doc) for doc in getter_docs]
@@ -899,8 +904,11 @@ def _init_api():
 
                 if api.type == APIType.property and not api.has_factors:
                     attr = property(make_dummy_function(name, prior, True))
+                    propdoc = getattr(priorcls, api.name).__doc__
+                    if propdoc is None:
+                        propdoc = ""
                     attr.__doc__ = (
-                        getattr(priorcls, api.name).__doc__ + "\n\n.. important::\n"
+                        propdoc + "\n\n.. important::\n"
                         f"   This property is only available when using the :class:`~.priors.{prior}` prior."
                     )
                     setattr(MofaFlex, name, attr)
@@ -950,6 +958,8 @@ def _init_api():
                     setattr(getattr(apipriors, prior), name, wrapperfunc2)
                     Term._api(MofaFlex, name)
 
+                if wrapperfunc.__doc__ is None:
+                    wrapperfunc.__doc__ = ""
                 wrapperfunc.__doc__ += (
                     f"\n{indent}.. important::\n"
                     f"{indent}   This method is only available when using the :class:`~.priors.{prior}` prior.\n"
@@ -960,12 +970,16 @@ def _init_api():
             params = [
                 param
                 for param in inspect.signature(postprocess_method).parameters.values()
-                if param.name not in {"self", "results", "moment", "name", "kwargs"}
+                if param.name not in getter_ignored_params[axis]
             ]
             if len(params) > 0:
-                getter_params[axis].extend(params)
                 for param in params:
-                    getter_annots[axis][param.name] = param.annotation
+                    if param.name not in getter_sigs[axis].parameters:
+                        getter_params[axis].append(param)
+                        getter_annots[axis][param.name] = param.annotation
+                    else:
+                        getter_annots[axis][param.name] |= param.annotation
+                    getter_ignored_params[axis].add(param.name)
                 if doc := postprocess_method.__doc__:
                     docindent = get_indentation(doc)
                     lines = doc.expandtabs(4).splitlines()

@@ -114,6 +114,10 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
                 the factors in the dataframes will be ordered by explained variance or not. For this to work,
                 the factors must be in the columns. Defaults to `True` for methods and `False` for properties.
                 A property with `has_factors=True` will be wrapped in a getter method.
+            factors_subset: Name of a property of the subclass that returns something that can be used to index a list
+                or NumPy array. If `has_factors=True` and the decorated method returns only a subset of factors, this
+                property must return the indices of the factors returned by the decorated method. Ignored with
+                `has_factors=False`.
         """
 
         class __api:

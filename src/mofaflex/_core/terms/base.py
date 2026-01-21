@@ -84,11 +84,11 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
                 setattr(owner, name, self._func)
 
             def _setter(self, func):
-                self._func.setter(func)
+                self._func = self._func.setter(func)
                 return self
 
             def _deleter(self, func):
-                self._func.deleter(func)
+                self._func = self._func.deleter(func)
                 return self
 
         if isinstance(obj, Callable | property) and not isinstance(obj, __class__) and not isinstance(obj, type):
