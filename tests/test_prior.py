@@ -131,7 +131,7 @@ def test_dynamic_api(rng, dummyprior):
     term._factor_names = np.asarray(term.factor_names)
     term.factor_order = rng.choice(dummyprior.n_factors, size=dummyprior.n_factors, replace=False)
 
-    factor_order_subset = term.factor_order[dummyprior.subset_prop]
+    factor_order_subset = term.factor_order[dummyprior.subset_prop].copy()
     factor_order_subset[np.argsort(factor_order_subset)] = np.arange(len(factor_order_subset))
 
     assert term.prop_nofactors == dummyprior.prop_nofactors
