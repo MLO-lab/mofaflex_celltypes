@@ -374,13 +374,18 @@ def overview(
 
 
 def variance_explained(
-    model: MOFAFLEX, group_by: Literal["group", "view"] = "group", figsize: tuple[float, float] | None = None
+    model: MOFAFLEX,
+    group_by: Literal["group", "view"] = "group",
+    term: str | None = None,
+    figsize: tuple[float, float] | None = None,
 ) -> p9.ggplot:
     """Plot the variance explained per factor in each group and view.
 
     Args:
         model: The MOFA-FLEX model.
         group_by: The grouping to use for the plots.
+        term: The name of the additive term to plot the variance explained for. Can be omitted if the model has only one
+            additive term.
         figsize: Figure size in inches.
     """
     if group_by == "group":
@@ -393,7 +398,7 @@ def variance_explained(
     if figsize is None:
         figsize = (len(model.group_names) * 3, 5)
 
-    df_r2 = model.get_r2("term", ordered=True).assign(
+    df_r2 = model.get_r2("term", ordered=True, term=term).assign(
         factor=lambda x: pd.Categorical(x.component, categories=x.component.unique())
     )
     heatmap = (
