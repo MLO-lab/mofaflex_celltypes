@@ -160,6 +160,7 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
         view_name: str,
         sample_idx: NDArray[int] | slice = slice(None),
         feature_idx: NDArray[int] | slice = slice(None),
+        idx_cartesian_product: bool = True,
     ) -> NDArray[np.floating]:
         """Predict the value of the term for a given group and view.
 
@@ -168,6 +169,9 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
             view_name: The view.
             sample_idx: The subset of samples to predict for.
             feature_idx: The subset of features to predict for.
+            idx_cartesian_product: If both `sample_idx` and `feature_idx` are given, whether to generate predictions
+                at the cartesian product of `sample_idx` and `feature_idx`, or at individual positions
+                `[sample_idx[i], feature_idx[i]]`. If `False`, `sample_idx` and `feature_idx` must have the same length.
         """
         pass
 
@@ -177,6 +181,7 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
         view_name: str,
         sample_idx: NDArray[int] | slice = slice(None),
         feature_idx: NDArray[int] | slice = slice(None),
+        idx_cartesian_product: bool = True,
     ) -> Iterable[tuple[str, NDArray[np.floating]]]:
         """Predict individual components of this term.
 
@@ -187,6 +192,9 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
             view_name: The view.
             sample_idx: The subset of samples to predict for.
             feature_idx: The subset of features to predict for.
+            idx_cartesian_product: If both `sample_idx` and `feature_idx` are given, whether to generate predictions
+                at the cartesian product of `sample_idx` and `feature_idx`, or at individual positions
+                `[sample_idx[i], feature_idx[i]]`. If `False`, `sample_idx` and `feature_idx` must have the same length.
         """
         pass
 

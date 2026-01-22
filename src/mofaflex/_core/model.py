@@ -441,6 +441,7 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
         view_name: str,
         sample_idx: NDArray[int] | slice = slice(None),
         feature_idx: NDArray[int] | slice = slice(None),
+        idx_cartesian_product: bool = True,
     ):
         """Create a prediction for a given group and view.
 
@@ -449,10 +450,16 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
             view_name: The view.
             sample_idx: The subset of samples to predict for.
             feature_idx: The subset of features to predict for.
+            idx_cartesian_product: If both `sample_idx` and `feature_idx` are given, whether to generate predictions
+                at the cartesian product of `sample_idx` and `feature_idx`, or at individual positions
+                `[sample_idx[i], feature_idx[i]]`. If `False`, `sample_idx` and `feature_idx` must have the same length.
         """
         return reduce(
             operator.add,
-            (term.predict(group_name, view_name, sample_idx, feature_idx) for term in self._terms.values()),
+            (
+                term.predict(group_name, view_name, sample_idx, feature_idx, idx_cartesian_product)
+                for term in self._terms.values()
+            ),
         )
 
     def get_dispersion(
@@ -508,10 +515,9 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
             if have_missing_cells:
                 nanobs, nanvar = wherenan(data.X)
                 nanobs, nanvar = np.atleast_1d(obsidx[nanobs]), np.atleast_1d(varidx[nanvar])
-                for nobs, nvar in zip(nanobs, nanvar, strict=True):
-                    imputation[nobs, nvar] = self.predict(
-                        group_name, view_name, np.atleast_1d(nobs), np.atleast_1d(nvar)
-                    ).squeeze()
+                imputation[nanobs, nanvar] = self.predict(
+                    group_name, view_name, nanobs, nanvar, idx_cartesian_product=False
+                )
 
         return AnnData(X=imputation, obs=pd.DataFrame(index=sample_names), var=pd.DataFrame(index=feature_names))
 

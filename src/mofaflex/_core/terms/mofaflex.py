@@ -717,11 +717,18 @@ class MofaFlex(Term):
         view_name: str,
         sample_idx: NDArray[int] | slice = slice(None),
         feature_idx: NDArray[int] | slice = slice(None),
-    ):
-        return (
-            self._get_postprocessed_factors("mean", group_name)[sample_idx]
-            @ self._get_postprocessed_weights("mean", view_name)[feature_idx].T
-        )
+        idx_cartesian_product: bool = True,
+    ) -> NDArray[np.floating]:
+        if idx_cartesian_product:
+            return (
+                self._get_postprocessed_factors("mean", group_name)[sample_idx]
+                @ self._get_postprocessed_weights("mean", view_name)[feature_idx].T
+            )
+        else:
+            return (
+                self._get_postprocessed_factors("mean", group_name)[sample_idx]
+                * self._get_postprocessed_weights("mean", view_name)[feature_idx]
+            ).sum(axis=1)
 
     def prediction_components(
         self,
@@ -729,15 +736,26 @@ class MofaFlex(Term):
         view_name: str,
         sample_idx: NDArray[int] | slice = slice(None),
         feature_idx: NDArray[int] | slice = slice(None),
+        idx_cartesian_product: bool = True,
     ) -> Iterable[tuple[str, NDArray[np.floating]]]:
-        yield from (
-            (
-                factor_name,
-                self._get_postprocessed_factors("mean", group_name)[sample_idx, factor_idx, None]
-                @ self._get_postprocessed_weights("mean", view_name)[None, feature_idx, factor_idx],
+        if idx_cartesian_product:
+            yield from (
+                (
+                    factor_name,
+                    self._get_postprocessed_factors("mean", group_name)[sample_idx, factor_idx, None]
+                    @ self._get_postprocessed_weights("mean", view_name)[None, feature_idx, factor_idx],
+                )
+                for factor_idx, factor_name in enumerate(self.factor_names)
             )
-            for factor_idx, factor_name in enumerate(self.factor_names)
-        )
+        else:
+            yield from (
+                (
+                    factor_name,
+                    self._get_postprocessed_factors("mean", group_name)[sample_idx, factor_idx]
+                    * self._get_postprocessed_weights("mean", view_name)[feature_idx, factor_idx],
+                )
+                for factor_idx, factor_name in enumerate(self.factor_names)
+            )
 
     def _save(self) -> dict[str, Any]:
         return {
