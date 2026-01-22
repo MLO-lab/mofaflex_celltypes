@@ -379,13 +379,14 @@ def variance_explained(
     term: str | None = None,
     figsize: tuple[float, float] | None = None,
 ) -> p9.ggplot:
-    """Plot the variance explained per factor in each group and view.
+    """Plot the fraction of variance explained per factor in each group and view.
 
     Args:
         model: The MOFA-FLEX model.
         group_by: The grouping to use for the plots.
-        term: The name of the additive term to plot the variance explained for. Can be omitted if the model has only one
-            additive term.
+        term: The name of the additive term to plot the variance explained for. If `None` and the model has only one additive term,
+            will plot the fraction of variance explained per factor for this term. If `None` and the model has multiple terms, will
+            plot the fraction of variance explained per term.
         figsize: Figure size in inches.
     """
     if group_by == "group":
@@ -398,8 +399,10 @@ def variance_explained(
     if figsize is None:
         figsize = (len(model.group_names) * 3, 5)
 
-    df_r2 = model.get_r2("term", ordered=True, term=term).assign(
-        factor=lambda x: pd.Categorical(x.component, categories=x.component.unique())
+    byterm = term is None and model.n_terms > 1
+    col = "term" if byterm else "component"
+    df_r2 = model.get_r2("byterm" if byterm else "term", ordered=True, term=term).assign(
+        factor=lambda x: pd.Categorical(x[col], categories=x[col].unique())
     )
     heatmap = (
         p9.ggplot(df_r2, p9.aes(x=x, y="factor", fill="R2"))
