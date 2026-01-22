@@ -435,7 +435,7 @@ def factor_significance(
     `alpha` FDR will be annotated with the direction of the test.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the factor significance for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         n_factors: Number of top factors to plot. If `None`, plot all factors (ordered).
         views: The views to consider in the ranking. If `None`, plot all views.
         groups: The groups to consider in the ranking. If `None`, plot all groups.
@@ -538,7 +538,7 @@ def all_weights(
     """Plot the weight matrices.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the weights for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         views: The views to consider in the ranking. If `None`, plot all views.
         clip: Weight value range to clip to.
         show_featurenames: Whether to show the feature names on the Y axis.
@@ -586,7 +586,7 @@ def factor(
     """Plot factor values (y-axis) for each sample (x-axis).
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the factor values for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         factor: The factor to plot.
         show_samplenames: Whether to show the feature names on the X axis.
         figsize: Figure size in inches.
@@ -647,7 +647,7 @@ def _plot_factors_covariate(
     """Plot every factor against one or two covariates.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the factors for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         covariate1: The first covariate to plot against. Can be an integer index or the covariate name, if the covariates are named.
         covariate2: The first covariate to plot against. Can be an integer index or the covariate name, if the covariates are named.
             If `None`, only one covariate will be plotted.
@@ -716,7 +716,7 @@ def factors_covariate(
     """Plot every factor against one or two covariates.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the factors for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         covariate1: The first covariate to plot against. Can be an integer index or the covariate name, if the covariates are named.
         covariate2: The first covariate to plot against. Can be an integer index or the covariate name, if the covariates are named.
             If `None`, only one covariate will be plotted.
@@ -740,7 +740,7 @@ def gp_covariate(
     If the model covariates are 1D, plot the covariate on X and the GP posterior mean and 95% confidence interval on Y.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the factors for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         ci_opacity: Opacity of the 95% CI band. Only relevant for 1D covariates.
         group: Whether to encode the sample groups by color or by faceting. Only relevant for 1D covariates.
         color: Color of the line and CI and. Only relevant for 1D covariates and `group="facet"`.
@@ -819,7 +819,7 @@ def smoothness(model: types.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = 
     """Plot the smoothness of the GP for each factor.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the smoothness for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         figsize: Figure size in inches.
     """
     scale = model.gp_scale
@@ -917,7 +917,7 @@ def top_weights(
     """Plot the top weights for a given factor and view.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the top weights for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         n_features: Number of top features to plot.
         views: The views to consider in the ranking. If `None`, plot all views.
         factors: The factors to plot. If `None`, plot all factors.
@@ -974,7 +974,7 @@ def weights(
     """Plot the weights for a given factor and view.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the weights for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         n_features: Number of top features to annotate.
         views: The views to consider in the ranking. If `None`, use all views.
         factors: The factors to plot. If `None`, plot all factors.
@@ -1075,7 +1075,7 @@ def weight_sparsity_histogram(
     the posterior probability of the Normal mixture compoonent.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the histogram for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         bins: Number of histogram bins.
         nrow: Number of rows in the faceted plot. If None, plotnine will determine automatically.
         ncol: Number of columns in the faceted plot. If None, plotnine will determine automatically.
@@ -1095,7 +1095,7 @@ def factor_sparsity_histogram(
     the posterior probability of the Normal mixture compoonent.
 
     Args:
-        model: The term to plot the factor correlation for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
+        model: The term to plot the histogram for. Can also be a :class:`~mofaflex.MOFAFLEX` object if it has only one term.
         bins: Number of histogram bins.
         nrow: Number of rows in the faceted plot. If None, plotnine will determine automatically.
         ncol: Number of columns in the faceted plot. If None, plotnine will determine automatically.
