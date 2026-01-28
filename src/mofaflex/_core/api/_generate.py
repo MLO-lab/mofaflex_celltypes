@@ -1,6 +1,6 @@
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from inspect import Parameter, signature
 
 
@@ -25,7 +25,12 @@ class APIWrapper(ABC):
         return hash((self.__class__, self._args, tuple(sorted(self._kwargs.items()))))
 
 
-def init_api(module: str, basecls: type, subclss: Mapping[str, type]):
+def init_api(
+    module: str,
+    basecls: type,
+    subclss: Mapping[str, type],
+    doc_callback: Callable[[str | None, type], str | None] | None = None,
+):
     mod = sys.modules[module]
     coreinit = basecls.__dict__.get("__init__", None)
     if coreinit is not None:
@@ -67,7 +72,7 @@ def init_api(module: str, basecls: type, subclss: Mapping[str, type]):
         apicls = type(
             subname, (basewrapper,), {"_cls": subcls, "__init__": init, "__call__": call, "__module__": module}
         )
-        apicls.__doc__ = subcls.__doc__
+        apicls.__doc__ = subcls.__doc__ if doc_callback is None else doc_callback(subcls.__doc__, subcls)
 
         setattr(mod, subname, apicls)
         all_.append(subname)

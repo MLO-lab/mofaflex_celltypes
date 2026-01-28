@@ -845,23 +845,10 @@ class MofaFlex(Term):
 
 # init API for docs
 def _init_api():
+    from ..utils import docstring_get_indentation
+
     def raise_(exc):
         raise exc
-
-    def get_line_indentation(line: str):
-        for i, s in enumerate(line):
-            if not s.isspace():
-                return i
-        return np.inf
-
-    def get_indentation(docstring: str):
-        if not docstring:
-            return 0
-        lines = docstring.expandtabs(4).splitlines()
-        min_indent = np.inf
-        for line in lines[1:]:
-            min_indent = min(min_indent, get_line_indentation(line))
-        return min_indent if np.isfinite(min_indent) else 0
 
     def make_dummy_function(name: str, prior: str, is_property: bool):
         if is_property:
@@ -888,7 +875,7 @@ def _init_api():
     )
     getter_annots = tuple(getter.__annotations__ for getter in getters)
     getter_docs = [getter.__doc__ for getter in getters]
-    getter_indents = [" " * get_indentation(doc) for doc in getter_docs]
+    getter_indents = [" " * docstring_get_indentation(doc) for doc in getter_docs]
 
     seen_priors = set()
     for axis, axisname, priors in (
@@ -901,12 +888,12 @@ def _init_api():
         duplicates = {k for k, v in namescount.items() if v > 1}
 
         for prior, priorcls in priors.items():
-            if building_docs() and prior not in seen_priors:
+            if building_docs() and prior not in seen_priors and len(priorcls.api()):
                 apiprior = getattr(apipriors, prior)
                 doc = apiprior.__doc__
                 if doc is None:
                     doc = ""
-                indent = " " * get_indentation(doc)
+                indent = " " * docstring_get_indentation(doc)
                 apiprior.__doc__ = (
                     doc + f"\n\n{indent}.. important::\n"
                     f"{indent}   All methods and properties of this class are only accessible through the :class:`~.terms.MofaFlex` class."
@@ -945,7 +932,7 @@ def _init_api():
                 annots = func.__annotations__.copy()
                 wrapperfunc = make_dummy_function(name, prior, False)
                 if api.has_factors or building_docs():
-                    indent = " " * get_indentation(doc)
+                    indent = " " * docstring_get_indentation(doc)
                 if not api.has_factors:
                     wrapperfunc.__doc__ = doc
                     wrapperfunc.__signature__ = sig
@@ -999,7 +986,7 @@ def _init_api():
                         getter_annots[axis][param.name] |= param.annotation
                     getter_ignored_params[axis].add(param.name)
                 if doc := postprocess_method.__doc__:
-                    docindent = get_indentation(doc)
+                    docindent = docstring_get_indentation(doc)
                     lines = doc.expandtabs(4).splitlines()
                     lines[0] = getter_indents[axis] + "Args:"
                     for i, line in enumerate(lines[1:]):

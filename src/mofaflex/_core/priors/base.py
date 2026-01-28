@@ -150,7 +150,7 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=_PyroMeta):
             return __api
 
     @classmethod
-    def api(cls) -> Iterable[API]:
+    def api(cls) -> Sequence[API]:
         """The user-facing API of this prior."""
         return cls._apilist
 
