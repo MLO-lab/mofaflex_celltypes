@@ -207,7 +207,7 @@ class MuDataDataset(MofaFlexDataset):
 
     @property
     def sample_names(self) -> dict[str, NDArray[str]]:
-        return {groupname: self._data[groupidx, :].obs_names.to_numpy() for groupname, groupidx in self._groups.items()}
+        return {groupname: self._data.obs_names[groupidx].to_numpy() for groupname, groupidx in self._groups.items()}
 
     @property
     def feature_names(self) -> dict[str, NDArray[str]]:
@@ -357,7 +357,7 @@ class MuDataDataset(MofaFlexDataset):
                 if sparse.issparse(mod.X):
                     modmissing = mod.X.copy()
                     modmissing.data = np.isnan(modmissing.data)
-                    modmissing = ~(np.asarray(modmissing.sum(axis=1)).squeeze() == 0)
+                    modmissing = np.asarray(modmissing.sum(axis=1)).squeeze() == modmissing.shape[1]
                 else:
                     modmissing = np.isnan(mod.X).all(axis=1)
                 modmissing = self._align_local_array_to_global(modmissing, modname, subdata, fill_value=True)
@@ -404,7 +404,9 @@ class MuDataDataset(MofaFlexDataset):
                 if ckey is None and cmkey is None:
                     continue
                 if ckey and cmkey:
-                    raise ValueError(f"Provide either key or mkey for {outer_msg} {outer_key}, not both.")
+                    raise ValueError(
+                        f"Provide either key or mkey for {outer_msg} {outer_key}, got key='{ckey}', mkey='{cmkey}'."
+                    )
 
                 ccov = None
                 if ckey is not None:
