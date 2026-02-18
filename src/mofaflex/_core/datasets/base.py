@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
+from functools import wraps
+from inspect import signature
 from types import FunctionType, MethodType
 from typing import Any, Concatenate, Literal, TypeAlias, TypeVar, Union
 
@@ -106,6 +108,36 @@ class MofaFlexDataset(Dataset, ABC):
         raise NotImplementedError("Input data type not recognized.")
 
     @staticmethod
+    def _axis_arg(arg: str):
+        """Decorator that can be used by subclassses to simplfy handling of axis arguments.
+
+        The argument of the decorated method given by `arg` can take `Literal[0, 1]`. This decorator will
+        convert more user-friendly values to 0 (indicating the sample axis) or 1 (indicating the feature axis).
+
+        Args:
+            arg: The name of the axis argument.
+        """
+
+        def decorate(func: FunctionType):
+            sig = signature(func)
+
+            @wraps(func)
+            def wrapped(*args, **kwargs):
+                ba = sig.bind(*args, **kwargs)
+                axis = ba.arguments[arg]
+                if axis in ("samples", "obs"):
+                    axis = 0
+                elif axis in ("features", "var"):
+                    axis = 1
+                ba.arguments[arg] = axis
+                return func(*ba.args, **ba.kwargs)
+
+            wrapped.__annotations__[arg] = Literal[0, 1, "samples", "features", "obs", "var"]
+            return wrapped
+
+        return decorate
+
+    @staticmethod
     @abstractmethod
     def _accepts_input(data) -> bool:
         """Determines if `data` can be handled by the given Dataset.
@@ -176,8 +208,9 @@ class MofaFlexDataset(Dataset, ABC):
         """Feature names for each view."""
         pass
 
-    def get_names(self, axis: Literal[0, 1, "samples", "features"]) -> dict[str, NDArray[str]]:
-        if axis in (0, "samples"):
+    @_axis_arg("axis")
+    def get_names(self, axis: Literal[0, 1]) -> dict[str, NDArray[str]]:
+        if axis == 0:
             return self.sample_names
         else:
             return self.feature_names
@@ -228,12 +261,13 @@ class MofaFlexDataset(Dataset, ABC):
         pass
 
     @abstractmethod
+    @_axis_arg("align_to")
     def align_local_array_to_global(
         self,
         arr: NDArray[T],
         group_name: str,
         view_name: str,
-        align_to: Literal["samples", "features"],
+        align_to: Literal[0, 1],
         axis: int = 0,
         fill_value: np.ScalarType = np.nan,
     ) -> NDArray[T]:
@@ -250,8 +284,9 @@ class MofaFlexDataset(Dataset, ABC):
         pass
 
     @abstractmethod
+    @_axis_arg("align_to")
     def align_global_array_to_local(
-        self, arr: NDArray[T], group_name: str, view_name: str, align_to: Literal["samples", "features"], axis: int = 0
+        self, arr: NDArray[T], group_name: str, view_name: str, align_to: Literal[0, 1], axis: int = 0
     ) -> NDArray[T]:
         """Align an array corresponding to global samples/features to a local samples/features by omitting observations not present in that view.
 
@@ -265,8 +300,9 @@ class MofaFlexDataset(Dataset, ABC):
         pass
 
     @abstractmethod
+    @_axis_arg("align_to")
     def map_local_indices_to_global(
-        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal["samples, features"]
+        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal[0, 1]
     ) -> NDArray[int]:
         """Map indices corresponding to local samples/features to the corresponding global indices.
 
@@ -279,8 +315,9 @@ class MofaFlexDataset(Dataset, ABC):
         pass
 
     @abstractmethod
+    @_axis_arg("align_to")
     def map_global_indices_to_local(
-        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal["samples, features"]
+        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal[0, 1]
     ) -> NDArray[int]:
         """Map indices corresponding to global samples/features to the corresponding local indices.
 
@@ -308,9 +345,10 @@ class MofaFlexDataset(Dataset, ABC):
         """
         pass
 
+    @_axis_arg("axis")
     def get_covariates(
         self,
-        axis: Literal[0, 1, "samples", "features"],
+        axis: Literal[0, 1],
         key: str | dict[str, str] | None = None,
         mkey: str | dict[str, str] | None = None,
         filter_names: str | Sequence[str] | None = None,
@@ -325,12 +363,10 @@ class MofaFlexDataset(Dataset, ABC):
             filter_names: List of groups (for `axis==0`) or views (for `axis==1`) to include. If `None`, will include all groups/views.
             fill_value: Function returning the alignment fill value (see `align_local_array_to_global`) for a given array dtype.
         """
-        if axis in (0, "samples"):
+        if axis == 0:
             names = self.group_names
-            axis = 0
         else:
             names = self.view_names
-            axis = 1
 
         if key is None:
             key = {}
@@ -347,7 +383,7 @@ class MofaFlexDataset(Dataset, ABC):
     @abstractmethod
     def _get_covariates(
         self,
-        axis: int,
+        axis: Literal[0, 1],
         key: Mapping[str, str],
         mkey: Mapping[str, str],
         filter_names: Sequence[str] | None,

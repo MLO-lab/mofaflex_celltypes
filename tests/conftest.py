@@ -96,3 +96,16 @@ def mousebrain_model():
 @pytest.fixture(scope="session")
 def mousebrain_data():
     return {"group_1": {"view_1": ad.read_h5ad(Path(__file__).parent / "data" / "mouse_brain.h5ad")}}
+
+
+@pytest.fixture(scope="session")
+def nonmissing_to_slice():
+    def func(nonmissing, expected_size):
+        if isinstance(nonmissing, slice):
+            return nonmissing
+        if nonmissing.size == expected_size and np.all(np.diff(nonmissing) == 1):
+            return slice(None)
+        else:
+            return nonmissing
+
+    return func

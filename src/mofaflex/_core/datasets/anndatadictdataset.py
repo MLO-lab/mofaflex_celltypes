@@ -289,12 +289,12 @@ class AnnDataDictDataset(MofaFlexDataset):
         arr: NDArray[T],
         group_name: str,
         view_name: str,
-        align_to: Literal["samples", "features"],
+        align_to: Literal[0, 1],
         local_indexer: Callable[[AlignmentMap], NDArray[int]],
         axis: int = 0,
         fill_value: np.ScalarType = np.nan,
     ):
-        map = (self._obsmap if align_to == "samples" else self._varmap)[group_name].get(view_name)
+        map = (self._obsmap if align_to == 0 else self._varmap)[group_name].get(view_name)
         if map is None:
             return arr
 
@@ -307,12 +307,13 @@ class AnnDataDictDataset(MofaFlexDataset):
         out[map.d2g >= 0, ...] = arr[local_indexer(map), ...]
         return np.moveaxis(out, 0, axis)
 
+    @MofaFlexDataset._axis_arg("align_to")
     def align_local_array_to_global(
         self,
         arr: NDArray[T],
         group_name: str,
         view_name: str,
-        align_to: Literal["samples", "features"],
+        align_to: Literal[0, 1],
         axis: int = 0,
         fill_value: np.ScalarType = np.nan,
     ):
@@ -320,27 +321,30 @@ class AnnDataDictDataset(MofaFlexDataset):
             arr, group_name, view_name, align_to, lambda map: np.argsort(map.g2d[map.g2d >= 0]), axis, fill_value
         )
 
+    @MofaFlexDataset._axis_arg("align_to")
     def align_global_array_to_local(
-        self, arr: NDArray[T], group_name: str, view_name: str, align_to: Literal["samples", "features"], axis: int = 0
+        self, arr: NDArray[T], group_name: str, view_name: str, align_to: Literal[0, 1], axis: int = 0
     ) -> NDArray[T]:
-        map = (self._obsmap if align_to == "samples" else self._varmap)[group_name].get(view_name)
+        map = (self._obsmap if align_to == 0 else self._varmap)[group_name].get(view_name)
         if map is None:
             return arr
         map = map.g2d
         return np.take(arr, map[map >= 0], axis=axis)
 
+    @MofaFlexDataset._axis_arg("align_to")
     def map_local_indices_to_global(
-        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal["samples, features"]
+        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal[0, 1]
     ) -> NDArray[int]:
-        map = (self._obsmap if align_to == "samples" else self._varmap)[group_name].get(view_name)
+        map = (self._obsmap if align_to == 0 else self._varmap)[group_name].get(view_name)
         if map is None:
             return idx
         return map.g2d[map.g2d >= 0][idx]
 
+    @MofaFlexDataset._axis_arg("align_to")
     def map_global_indices_to_local(
-        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal["samples, features"]
+        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal[0, 1]
     ) -> NDArray[int]:
-        map = (self._obsmap if align_to == "samples" else self._varmap)[group_name].get(view_name)
+        map = (self._obsmap if align_to == 0 else self._varmap)[group_name].get(view_name)
         if map is None:
             return idx
         idx = map.d2g[idx]
@@ -373,7 +377,7 @@ class AnnDataDictDataset(MofaFlexDataset):
                 else:
                     viewmissing = np.isnan(view.X).all(axis=1)
                 viewmissing = self.align_local_array_to_global(
-                    viewmissing, group_name, view_name, "samples", fill_value=True
+                    viewmissing, group_name, view_name, align_to=0, fill_value=True
                 )
                 dfs.append(
                     pd.DataFrame(
