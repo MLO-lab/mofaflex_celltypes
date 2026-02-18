@@ -119,7 +119,7 @@ class MuDataDatasetTest:
 
         return mdata
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture(scope="function")
     def dataset(self, mdata, layer, subset_var):
         return MofaFlexDataset(mdata, group_by="batch", layer=layer, subset_var=subset_var, cast_to=np.float32)
 
@@ -230,7 +230,7 @@ class MuDataDatasetTest:
                 )
                 assert np.all(global_idx[local_idx >= 0] == new_global_idx)
 
-    def test_getitems(self, mdata, dataset, layer, rng):
+    def test_getitems(self, mdata, dataset, layer, rng, nonmissing_to_slice):
         if layer is not None:
             if isinstance(layer, str):
                 func = lambda modname: layer
@@ -273,15 +273,21 @@ class MuDataDatasetTest:
                 )
                 assert np.all(cdata.X == view)
 
-                cnonmissing_obs = np.nonzero(np.isin(sample_names, cdata.obs_names))[0]
-                if cnonmissing_obs.size == sample_names.size and np.all(np.diff(cnonmissing_obs) == 1):
-                    cnonmissing_obs = slice(None)
-                assert np.all(items["nonmissing_samples"][group_name][view_name] == cnonmissing_obs)
+                cnonmissing_obs = nonmissing_to_slice(
+                    np.nonzero(np.isin(sample_names, cdata.obs_names))[0], sample_names.size
+                )
+                assert np.all(
+                    nonmissing_to_slice(items["nonmissing_samples"][group_name][view_name], sample_names.size)
+                    == cnonmissing_obs
+                )
 
-                cnonmissing_var = np.nonzero(np.isin(feature_names, cdata.var_names))[0]
-                if cnonmissing_var.size == feature_names.size and np.all(np.diff(cnonmissing_var) == 1):
-                    cnonmissing_var = slice(None)
-                assert np.all(items["nonmissing_features"][group_name][view_name] == cnonmissing_var)
+                cnonmissing_var = nonmissing_to_slice(
+                    np.nonzero(np.isin(feature_names, cdata.var_names))[0], feature_names.size
+                )
+                assert np.all(
+                    nonmissing_to_slice(items["nonmissing_features"][group_name][view_name], feature_names.size)
+                    == cnonmissing_var
+                )
 
     @pytest.mark.parametrize("axis", [0, 1])
     def test_get_covariates_from_key(self, mdata, dataset, subset_var, axis):
@@ -372,6 +378,32 @@ class MuDataDatasetTest:
             df = df.set_index("obs_name")
             assert np.all(df.loc[dataset.sample_names[group_name], "missing"][cmissing])
             assert np.all(~df.loc[dataset.sample_names[group_name], "missing"][~cmissing])
+
+    def test_reindex_samples(self, mdata, dataset, layer, rng, nonmissing_to_slice):
+        samples1, samples2 = {}, {}
+        for group_name, group_samples in dataset.sample_names.items():
+            selection = rng.choice([True, False], size=len(group_samples), p=[0.5, 0.5])
+            samples1[group_name] = group_samples[selection]
+            samples2[group_name] = np.concatenate((group_samples[~selection], group_samples[selection][:2]))
+
+        for samples in (samples1, samples2):
+            dataset.reindex_samples(samples)
+            for group_name, group_samples in samples.items():
+                assert np.all(dataset.sample_names[group_name] == group_samples)
+            self.test_getitems(mdata, dataset, layer, rng, nonmissing_to_slice)
+
+    def test_reindex_features(self, mdata, dataset, layer, rng, nonmissing_to_slice):
+        features1, features2 = {}, {}
+        for view_name, view_features in dataset.feature_names.items():
+            selection = rng.choice([True, False], size=len(view_features), p=[0.5, 0.5])
+            features1[view_name] = view_features[selection]
+            features2[view_name] = np.concatenate((view_features[~selection], view_features[selection][:2]))
+
+        for features in (features1, features2):
+            dataset.reindex_features(features)
+            for view_name, view_features in features.items():
+                assert np.all(dataset.feature_names[view_name] == view_features)
+            self.test_getitems(mdata, dataset, layer, rng, nonmissing_to_slice)
 
 
 class TestMuDataAxis0Dataset(MuDataDatasetTest):

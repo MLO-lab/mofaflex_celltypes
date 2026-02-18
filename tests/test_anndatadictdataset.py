@@ -72,7 +72,7 @@ def layer(request):
     return request.param
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def dataset(anndata_dict, layer, use_obs, use_var, subset_var):
     return MofaFlexDataset(
         anndata_dict, layer=layer, use_obs=use_obs, use_var=use_var, subset_var=subset_var, cast_to=np.float32
@@ -207,7 +207,7 @@ def test_index_mapping(anndata_dict, dataset, rng):
             assert np.all(global_idx[local_idx >= 0] == new_global_idx)
 
 
-def test_getitems(anndata_dict, dataset, layer, rng):
+def test_getitems(anndata_dict, dataset, layer, rng, nonmissing_to_slice):
     get_layer = lambda adata, layer: adata.layers[layer] if layer is not None else adata.X
     if layer is not None:
         if isinstance(layer, str):
@@ -255,8 +255,14 @@ def test_getitems(anndata_dict, dataset, layer, rng):
 
             cnonmissing_obs = np.nonzero(cobsidx)[0]
             cnonmissing_var = np.nonzero(cvaridx)[0]
-            assert np.all(items["nonmissing_samples"][group_name][view_name] == cnonmissing_obs)
-            assert np.all(items["nonmissing_features"][group_name][view_name] == cnonmissing_var)
+            assert np.all(
+                nonmissing_to_slice(items["nonmissing_samples"][group_name][view_name], cnonmissing_obs.size)
+                == nonmissing_to_slice(cnonmissing_obs, cnonmissing_obs.size)
+            )
+            assert np.all(
+                nonmissing_to_slice(items["nonmissing_features"][group_name][view_name], cnonmissing_var.size)
+                == nonmissing_to_slice(cnonmissing_var, cnonmissing_var.size)
+            )
 
 
 @pytest.mark.parametrize("usedask", [False, True])
@@ -404,3 +410,31 @@ def test_get_missing_obs(anndata_dict, dataset):
         df = df.set_index("obs_name")
         assert np.all(df.loc[dataset.sample_names[group_name], "missing"][cmissing])
         assert np.all(~df.loc[dataset.sample_names[group_name], "missing"][~cmissing])
+
+
+def test_reindex_samples(anndata_dict, dataset, layer, rng, nonmissing_to_slice):
+    samples1, samples2 = {}, {}
+    for group_name, group_samples in dataset.sample_names.items():
+        selection = rng.choice([True, False], size=len(group_samples), p=[0.5, 0.5])
+        samples1[group_name] = group_samples[selection]
+        samples2[group_name] = np.concatenate((group_samples[~selection], group_samples[selection][:2]))
+
+    for samples in (samples1, samples2):
+        dataset.reindex_samples(samples)
+        for group_name, group_samples in samples.items():
+            assert np.all(dataset.sample_names[group_name] == group_samples)
+        test_getitems(anndata_dict, dataset, layer, rng, nonmissing_to_slice)
+
+
+def test_reindex_features(anndata_dict, dataset, layer, rng, nonmissing_to_slice):
+    features1, features2 = {}, {}
+    for view_name, view_features in dataset.feature_names.items():
+        selection = rng.choice([True, False], size=len(view_features), p=[0.5, 0.5])
+        features1[view_name] = view_features[selection]
+        features2[view_name] = np.concatenate((view_features[~selection], view_features[selection][:2]))
+
+    for features in (features1, features2):
+        dataset.reindex_features(features)
+        for view_name, view_features in features.items():
+            assert np.all(dataset.feature_names[view_name] == view_features)
+        test_getitems(anndata_dict, dataset, layer, rng, nonmissing_to_slice)
