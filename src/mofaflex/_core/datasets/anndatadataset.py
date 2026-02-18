@@ -170,29 +170,33 @@ class AnnDataDataset(MofaFlexDataset):
             "nonmissing_features": nonmissing_var,
         }
 
+    @MofaFlexDataset._axis_arg("align_to")
     def align_local_array_to_global(
         self,
         arr: NDArray[T],
         group_name: str,
         view_name: str,
-        align_to: Literal["samples", "features"],
+        align_to: Literal[0, 1],
         axis: int = 0,
         fill_value: np.ScalarType = np.nan,
     ):
         return arr
 
+    @MofaFlexDataset._axis_arg("align_to")
     def align_global_array_to_local(
-        self, arr: NDArray[T], group_name: str, view_name: str, align_to: Literal["samples", "features"], axis: int = 0
+        self, arr: NDArray[T], group_name: str, view_name: str, align_to: Literal[0, 1], axis: int = 0
     ) -> NDArray[T]:
         return arr
 
+    @MofaFlexDataset._axis_arg("align_to")
     def map_local_indices_to_global(
-        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal["samples, features"]
+        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal[0, 1]
     ) -> NDArray[int]:
         return idx
 
+    @MofaFlexDataset._axis_arg("align_to")
     def map_global_indices_to_local(
-        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal["samples, features"]
+        self, idx: NDArray[int], group_name: str, view_name: str, align_to: Literal[0, 1]
     ) -> NDArray[int]:
         return idx
 
