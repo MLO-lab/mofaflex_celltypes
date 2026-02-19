@@ -40,11 +40,17 @@ def anndata_dict(random_adata, rng):
         random_adata("NegativeBinomial", 600, 90, var_names=[f"negativebinomial_var_{i}" for i in range(90)]),
     )
 
-    group_idxs = []
-    for adata in big_adatas:
-        permuted = rng.permutation(range(adata.n_obs))
-        group_size = rng.choice(np.arange(int(0.2 * adata.n_obs), int(0.8 * adata.n_obs)))
-        group_idxs.append((permuted[:group_size], permuted[group_size:]))
+    group_idxs = [None] * len(big_adatas)
+    while True:
+        for i, adata in enumerate(big_adatas):
+            permuted = rng.permutation(range(adata.n_obs))
+            group_size = rng.choice(np.arange(int(0.2 * adata.n_obs), int(0.8 * adata.n_obs)))
+            group_idxs[i] = (permuted[:group_size], permuted[group_size:])
+        intersects = [None, None]
+        for i in range(2):
+            intersects[i] = reduce(np.intersect1d, (idxs[i] for idxs in group_idxs))
+        if all(len(intersect) > 0 for intersect in intersects):
+            break
 
     adata_dict = {"group_1": {}, "group_2": {}}
     for view_name, (view_idx, view) in zip(
