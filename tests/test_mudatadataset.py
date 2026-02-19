@@ -538,7 +538,7 @@ class TestMuDataAxis1Dataset(MuDataDatasetTest):
                     map = mdata.varmap[modname].ravel()
                     mapmask = map > 0
                     cmask = np.zeros_like(mask)
-                    cmask[mapmask] = mod.var[subset_var][map[mapmask] - 1]
+                    cmask[mapmask] = mod.var[subset_var].iloc[map[mapmask] - 1]
                     mask &= cmask
         if group_name is not None:
             mapmask = mdata.varmap[group_name].ravel()

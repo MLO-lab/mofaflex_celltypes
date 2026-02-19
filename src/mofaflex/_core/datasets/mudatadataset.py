@@ -195,7 +195,6 @@ class MuDataDataset(MofaFlexDataset):
     @abstractmethod
     def _subset_reorder(self):
         pass
-        return slice(None) if self._data.axis == 0 else slice(None, None, -1)
 
     def _align_local_array_to_global_impl(
         self,
@@ -732,7 +731,7 @@ class MuDataAxis1Dataset(MuDataDataset):
             groups = self._get_groups(mudata.var, group_by)
             if subset_var in mudata.var:
                 for view_name, view_idx in groups.items():
-                    names = mudata.var[subset_var][view_idx]
+                    names = mudata.var[subset_var].iloc[view_idx]
                     feature_names[view_name] = names.index[names]
             else:
                 for modname, mod in mudata.mod.items():
@@ -743,7 +742,7 @@ class MuDataAxis1Dataset(MuDataDataset):
                             cmask = np.zeros_like(modmask)
                             cmask[view_idx] = 1
                             cmask &= modmask
-                            cnames = mod.var[subset_var][modmap[cmask] - 1]
+                            cnames = mod.var[subset_var].iloc[modmap[cmask] - 1]
                             cnames = cnames.index[cnames]
                             if view_name not in feature_names:
                                 feature_names[view_name] = cnames
