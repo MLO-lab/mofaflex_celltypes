@@ -418,7 +418,7 @@ class MuDataDataset(MofaFlexDataset):
             cret = func(
                 data[(group_idx, slice(None))[self._subset_reorder]][name], group_name, **kwargs, **gkwargs[group_name]
             )
-            ret[name] = apply_to_nested(cret, from_dask)
+            ret[group_name] = apply_to_nested(cret, from_dask)
         return ret
 
     def _apply_to_axis(
