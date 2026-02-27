@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning][].
 - R2 estimation for non-Gaussian likelihoods should be more robust.
 - The on-disk format for trained models has changed. Files created with mofaflex 0.1 cannot be read by 0.2 and vice versa.
 - The Gaussian process prior can now also be used for weights.
+- The spike and slab prior now has option to make the background distribution a Gaussian.
 
 ### Removed
 - The MOFA compatibility mode for saving a trained model.
