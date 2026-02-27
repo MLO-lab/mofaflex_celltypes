@@ -227,10 +227,10 @@ class InformedHorseshoe(Horseshoe):
         annotations = data.get_covariates(
             axis,
             mkey=self._annotations_varm_key,
-            filter_names=self._names,
+            filter_names=self.names,
             fill_value=lambda dt: False if dt == "boolean" or dt == np.bool else pd.NA,
         )
-        for name in list(annotations.keys()):
+        for name in annotations.keys():
             annot = annotations[name]
             if all(np.all((a.dtypes == np.bool) | (a.dtypes == "boolean")) for a in annot.values()):
                 annot = reduce(operator.or_, annot.values())

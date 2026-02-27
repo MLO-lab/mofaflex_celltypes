@@ -101,6 +101,8 @@ class GaussianProcess(Prior):
         self, data: MofaFlexDataset, axis: Literal[0, 1], n_factors: int, n_nonfactors: Mapping[str, int]
     ) -> dict[str, dict[str, pd.DataFrame]]:
         self._covariates = merge_covariates(data.get_covariates(axis, self._key, self._mkey, self._names))
+        if len(self._covariates) == 0:
+            raise ValueError("No covariates found.")
         for covar in self._covariates.values():
             if pd.api.types.is_integer_dtype(covar.columns):
                 covar.columns = "Covariate " + covar.columns.astype(str)
@@ -299,7 +301,7 @@ class GaussianProcess(Prior):
         with suppress(KeyError):
             self._gp.load_state_dict(unpickle_torch_state(state["gp_state"], map_location=map_location))
 
-    def _get_nonfactor_plate(self, nonfactor_plates: Mapping[str, pyro.plate]) -> pyro.plate:
+    def _get_nonfactor_plate(self, id: str, nonfactor_plates: Mapping[str, pyro.plate]) -> pyro.plate:
         """Make combined sample plate."""
         offset = 0
         subsample = []
@@ -308,7 +310,7 @@ class GaussianProcess(Prior):
             subsample.append(splate.indices + offset)
             offset += splate.size
         subsample = torch.cat(subsample)
-        return pyro.plate("gp_nonfactors", offset, dim=-2, subsample=subsample)
+        return pyro.plate(f"{id}_plate_gp_nonfactors", offset, dim=-2, subsample=subsample)
 
     @pyro_method
     def model(
@@ -324,7 +326,7 @@ class GaussianProcess(Prior):
         idx = torch.cat(tuple(self._idx[g].expand(gp_covariates[g].shape[0]) for g in gnames), dim=0)
         f_dist = self._gp.pyro_model((idx[..., None], covars), name_prefix=f"{id}_gp")
 
-        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
+        nonfactor_plate = self._get_nonfactor_plate(id, nonfactor_plates)
         with pyro.plate(f"{id}_gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
             f = pyro.sample(f"{id}_gp.f", f_dist)
         f = f.swapaxes(-2, -1)
@@ -356,7 +358,7 @@ class GaussianProcess(Prior):
         idx = torch.cat(tuple(self._idx[g].expand(gp_covariates[g].shape[0]) for g in gnames), dim=0)
         f_dist = self._gp.pyro_guide((idx[..., None], covars), name_prefix=f"{id}_gp")
 
-        nonfactor_plate = self._get_nonfactor_plate(nonfactor_plates)
+        nonfactor_plate = self._get_nonfactor_plate(id, nonfactor_plates)
         with pyro.plate(f"{id}_gp_batch", factor_plate.size, dim=-2):  # needs to be dim=-2 to work with GPyTorch
             pyro.sample(f"{id}_gp.f", f_dist)
 

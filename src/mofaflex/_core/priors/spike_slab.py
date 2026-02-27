@@ -45,7 +45,7 @@ class SpikeSlab(Prior):
         self._locs = PyroParameterDict()
         self._scales = PyroParameterDict()
 
-        for name in self._names:
+        for name in self.names:
             self._shapes[name] = PyroParam(
                 torch.full((1, n_factors), init_shape), constraint=constraints.softplus_positive
             )
@@ -83,7 +83,7 @@ class SpikeSlab(Prior):
         self._precisions = MeanStd({}, {})
         self._probabilities = {}
 
-        for name in self._names:
+        for name in self.names:
             precision_shape = self._shapes[name]
             precision_rate = self._rates[name]
             d = dist.Gamma(concentration=precision_shape, rate=precision_rate)
@@ -112,17 +112,10 @@ class SpikeSlab(Prior):
             pyro.sample(f"{id}_alpha_z_{name}", dist.Gamma(self._shapes[name], self._rates[name]))
             pyro.sample(f"{id}_theta_z_{name}", dist.Beta(self._alphas[name], self._betas[name]))
             with nonfactor_plate as index:
-                pyro.sample(
-                    f"{id}_s_z_{name}",
-                    ReinMaxBernoulli(temperature=2.0, probs=self._probs[name].index_select(nonfactor_plate.dim, index)),
-                )
+                pyro.sample(f"{id}_s_z_{name}", ReinMaxBernoulli(temperature=2.0, probs=self._probs[name][index, :]))
 
                 return pyro.sample(
-                    f"{id}_z_{name}",
-                    dist.Normal(
-                        self._locs[name].index_select(nonfactor_plate.dim, index),
-                        self._scales[name].index_select(nonfactor_plate.dim, index),
-                    ),
+                    f"{id}_z_{name}", dist.Normal(self._locs[name][index, :], self._scales[name][index, :])
                 )
 
     @property
@@ -132,7 +125,7 @@ class SpikeSlab(Prior):
     @property
     def posterior(self) -> MeanStd:
         posteriors = MeanStd({}, {})
-        for name in self._names:
+        for name in self.names:
             posteriors.mean[name] = self._locs[name]
             posteriors.std[name] = self._scales[name]
         return posteriors
@@ -183,12 +176,12 @@ class SpikeSlab(Prior):
             - thresh: Set all values with a sparsity probablity > 0.5 to 0.
         """
         if name is not None:
-            if name in self._names:
+            if name in self.names:
                 return self._postprocess_name(results, moment, name, sparse_type)
             else:
                 return None
         else:
             ret = {}
-            for name in self._names:
+            for name in self.names:
                 ret[name] = self._postprocess_name(results, moment, name, sparse_type)
             return ret
