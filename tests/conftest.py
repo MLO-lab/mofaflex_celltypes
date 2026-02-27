@@ -63,6 +63,8 @@ def random_adata(rng, random_array):
         )
         adata.obsm["covar_array"] = rng.random(size=(nobs, 3))
         adata.obsm["covar_sparse"] = csr_array(rng.poisson(size=(nobs, 3)))
+        adata.obsm["perturbations_bool"] = rng.choice(2, size=(nobs, 42)).astype(bool)
+        adata.obsm["perturbations_float"] = rng.random(size=(nobs, 42))
         adata.obs["gvar_normal"] = rng.random(size=(nobs))
         adata.obs["gvar_bernoulli"] = rng.binomial(1, 0.5, size=(nobs))
         adata.obs["gvar_categorical"] = pd.Categorical(rng.choice(["A", "B", "C"], size=(nobs)))

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning][].
 ### Added
 - Support for multiple additive terms.
 - Constant pseudo-prior. When used for weights, this can be used to project new data into an already existing latent space.
+- GSFA prior for analysis of CRISPR perturbation screens.
 - Single AnnData objects can now be used as input data. MOFA-FLEX will assume exactly one view for this type of input.
 - MuData objects with `axis=1` can now be used as input data. MOFA-FLEX will treat each modality as a group and use the `group_by`
   argument, if given, to select a column in `.var` to split the data into views.
