@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning][].
 ### Added
 - Support for multiple additive terms.
 - Constant pseudo-prior. When used for weights, this can be used to project new data into an already existing latent space.
+- GSFA prior for analysis of CRISPR perturbation screens.
 - Single AnnData objects can now be used as input data. MOFA-FLEX will assume exactly one view for this type of input.
 - MuData objects with `axis=1` can now be used as input data. MOFA-FLEX will treat each modality as a group and use the `group_by`
   argument, if given, to select a column in `.var` to split the data into views.
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning][].
 - R2 estimation for non-Gaussian likelihoods should be more robust.
 - The on-disk format for trained models has changed. Files created with mofaflex 0.1 cannot be read by 0.2 and vice versa.
 - The Gaussian process prior can now also be used for weights.
+- The spike and slab prior now has option to make the background distribution a Gaussian.
 
 ### Removed
 - The MOFA compatibility mode for saving a trained model.

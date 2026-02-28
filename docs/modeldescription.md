@@ -50,7 +50,7 @@ MOFA-FLEX offers several prior options for both weights and factors, where each 
   However, if $\beta_{i,k,j} \gg c_{i,k,j}$, then $\sigma_{i,k,j}^2 \approx c_{i,k,j}$, thus regularizing very large coefficients as a Gaussian with variance $c_{i,k,j}$.
   This is the same prior as used by MuVI{cite:p}`pmlr-v206-qoku23a`.
 
-- Spike and slab (SnS): A discrete sparsity-inducing prior with automatic relevance determination (ARD) for the non-zero slab component.
+- Spike and slab: A discrete sparsity-inducing prior with automatic relevance determination (ARD) for the non-zero slab component.
   This is a mixture of a Dirac delta distribution at 0 and a Normal distribution at 0 with positive variance:
   \begin{align*}
   \psi_{i,k} &\sim \dGamma{10^{-3}}{10^{-3}}\\
@@ -64,9 +64,22 @@ MOFA-FLEX offers several prior options for both weights and factors, where each 
   The spike component $p$ induces sparsity for each individual value $a_{i,k,j}$, while the ARD component $\psi_{i,k}$ induces factor-wise sparsity.
   This is the same prior as used by MOFA{cite:p}`pmid29925568,pmid32393329`.
 
+  Optionally, the background distribution can be set to a Normal instead of a Dirac delta.
+  In that case, this prior is equivalent to the Normal mixture prior used in GSFA {cite:p}`pmid37770710`.
+  The full Normal mixture prior is given by
+  \begin{align*}
+  \psi_{i,k} &\sim \dGamma{10^{-3}}{10^{-3}}\\
+  \theta_{i,k} &\sim \dBeta{1}{1}\\
+  c_{i,k} &\sim \dGamma{3}{0.5}\\
+  p_{i,k,j} &\sim \dBernoulli{\theta_{i,k}}\\
+  \beta_{i,k,j} &\sim \Normal{0}{\flatfrac{1}{\psi_{i,k}^2}}\\
+  \gamma_{i,k,j} &\sim \Normal{0}{\flatfrac{1}{\psi_{i,k}^2 c_{i,k}^2}}\\
+  a_{i,k,j} &= p_{i,k,j}\beta_{i,k,j} + (1 - p_{i,k,j}) \gamma_{i,k,j}
+  \end{align*}
+
   In our experience, the ReinMax distribution typically requires higher learning rates or longer training durations than other, continuous, distributions.
 
-- Gaussian process (GP, for factors only): A smoothness-inducing prior requiring additional covariates such as time or spatial coordinates for each observation.
+- Gaussian process: A smoothness-inducing prior requiring additional covariates such as time or spatial coordinates for each observation.
   MOFA-FLEX considers two smoothness levels: Between observations and between groups.
   This is achieved by using a product kernel of kernels for within-group and between-group smoothness.
   In detail, the group covariance matrix for $G$ groups and factor $k$ is defined by a low-rank approximation
@@ -94,6 +107,12 @@ MOFA-FLEX offers several prior options for both weights and factors, where each 
   For 1-dimensional covariates, which often represent time, MOFA-FLEX supports dynamic time warping to align multiple potentially mismatched timeseries.
   The algorithm and implementation closely follow MEFISTO{cite:p}`pmid35027765`.
   However, MOFA-FLEX's time warping algorithm works for any GP kernel.
+
+- Guided sparse factor analysis (GSFA, for factors only): A prior custom-made for CRISPR perturbation screens.
+  See {cite:t}`pmid37770710` for details.
+  Briefly, this prior requires an assignment of observations to perturbations, given by the perturbation matrix $\mat{G} \in \mathbb{R}^{N_g \times T}$ where $T$ is the number of targets.
+  The factors are then given by $\mat{G}\mat{\beta}$ where $\mat{\beta} \in \mathbb{R}^{T \times K}$ represents the effects of perturbations on factors.
+  Each row of $\mat{\beta}$ is sampled from a spike and slab distribution similar to the one described above.
 
 ## Choosing likelihoods
 
