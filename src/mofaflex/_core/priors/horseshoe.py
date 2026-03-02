@@ -188,7 +188,7 @@ class InformedHorseshoe(Horseshoe):
     def get_datasets(
         self, data: MofaFlexDataset, axis: Literal[0, 1], n_factors: int, n_nonfactors: Mapping[str, int]
     ) -> dict[str, dict[str, np.ndarray]]:
-        self._uninformed_scale = data.cast_to(1 - self._annotation_confidence)
+        self._uninformed_scale = np.asarray(data.cast_to(1 - self._annotation_confidence))[None]
         prior_scales = {
             name: np.clip(annotation.astype(data.cast_to) + (1 - self._annotation_confidence), 1e-8, 1.0)
             for name, annotation in self._annotations.items()
