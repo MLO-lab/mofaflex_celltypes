@@ -3,6 +3,7 @@ import logging
 import numpy as np
 import pandas as pd
 from scipy import stats
+from scipy.sparse import issparse
 from statsmodels.stats import multitest
 
 from .datasets import MofaFlexDataset
@@ -174,7 +175,11 @@ def pcgse_test(
                 np.concatenate(
                     [
                         data.align_local_array_to_global(
-                            group[view_name], group_name, view_name, align_to="features", axis=1
+                            view.toarray() if issparse(view := group[view_name]) else view,
+                            group_name,
+                            view_name,
+                            align_to="features",
+                            axis=1,
                         )
                         for group_name, group in y.items()
                     ],

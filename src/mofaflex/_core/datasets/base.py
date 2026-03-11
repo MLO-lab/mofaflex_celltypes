@@ -234,10 +234,10 @@ class MofaFlexDataset(Dataset, ABC):
 
         Returns:
             A dict with four entries: `"data"` is a nested dict with group names keys, view names as subkeys and
-            Numppy arrays of observations as values. `"sample_idx"` is the sample index (the `idx` argument
-            passed through). `"nonmissing_samples"` is a nested dict with group names as keys, view names as subkeys
-            and NumPy index arrays indicating which samples **in the current minibatch** are not missing as values.
-            If there are no missing samples, the value may be `slice(None)`. Similarly, `"nonmissing_features"`
+            Numpy arrays or sparse arrays of observations as values. `"sample_idx"` is the sample index (the `idx`
+            argument passed through). `"nonmissing_samples"` is a nested dict with group names as keys, view names
+            as subkeys and NumPy index arrays indicating which samples **in the current minibatch** are not missing
+            as values. If there are no missing samples, the value may be `slice(None)`. Similarly, `"nonmissing_features"`
             indicates which features are not missing.
         """
         pass

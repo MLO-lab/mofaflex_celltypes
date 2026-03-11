@@ -267,11 +267,7 @@ class AnnDataDictDataset(MofaFlexDataset):
                 )
                 if self.cast_to is not None:
                     arr = arr.astype(self.cast_to, copy=False)
-                if sparse.issparse(arr):
-                    arr = arr.toarray()
-                group[view_name] = np.asarray(
-                    arr
-                )  # arr may be an anndata._core.views.ArrayView, which is not recognized by PyTorch
+                group[view_name] = arr
             data[group_name] = group
             idx[group_name] = np.asarray(group_idx)
             nonmissing_obs[group_name] = gnonmissing_obs

@@ -18,7 +18,7 @@ from anndata import AnnData
 from mudata import MuData
 from pyro.infer import SVI, TraceMeanField_ELBO
 from pyro.optim import ClippedAdam
-from torch.utils.data import DataLoader, default_convert
+from torch.utils.data import DataLoader
 from torch.utils.data._utils.collate import collate  # this is documented, so presumably part of the public API
 from tqdm.auto import tqdm
 from tqdm.notebook import tqdm_notebook
@@ -31,7 +31,7 @@ from .likelihoods import LikelihoodType
 from .model import MofaFlexModel
 from .terms import Term, TermWrapper
 from .training import EarlyStopper
-from .utils import default_torch_device, filter_constant_features, sample_all_data_as_one_batch
+from .utils import convert_to_tensor, default_torch_device, filter_constant_features, sample_all_data_as_one_batch
 
 _logger = logging.getLogger(__name__)
 
@@ -350,13 +350,13 @@ class MOFAFLEX:
 
             singlebatch = self._train_opts.batch_size >= max(self.n_samples.values())
             collate_fn_map = {
-                torch.Tensor: lambda x, **kwargs: x[0].to(self._train_opts.device, non_blocking=True),
+                torch.Tensor: lambda x, **kwargs: x[0].to(self._train_opts.device, non_blocking=True).to_dense(),
                 slice: lambda x, **kwargs: x[0],
             }
             dataset = StackDataset(**datasets)
             if singlebatch:
                 batch = collate(
-                    (default_convert(dataset.__getitems__(sample_all_data_as_one_batch(data))),),
+                    (convert_to_tensor(dataset.__getitems__(sample_all_data_as_one_batch(data))),),
                     collate_fn_map=collate_fn_map,
                 )
                 batchdata = batch.pop("data")
@@ -366,7 +366,7 @@ class MOFAFLEX:
                     batch_sampler=MofaFlexBatchSampler(
                         data.n_samples, self._train_opts.batch_size, False, generator=torch.default_generator
                     ),
-                    collate_fn=default_convert,
+                    collate_fn=convert_to_tensor,
                     num_workers=self._train_opts.num_workers,
                     pin_memory=self._train_opts.pin_memory,
                     persistent_workers=self._train_opts.num_workers > 0,

@@ -26,7 +26,7 @@ from scipy.sparse import (
     sparray,
     spmatrix,
 )
-from torch.utils.data import BatchSampler, SequentialSampler
+from torch.utils.data import BatchSampler, SequentialSampler, default_convert
 
 from .settings import settings
 
@@ -285,6 +285,34 @@ def sample_all_data_as_one_batch(data: "MofaFlexDataset") -> dict[str, list[int]
         )
         for k, nsamples in data.n_samples.items()
     }
+
+
+def _convert_to_tensor(data):
+    if issparse(data):
+        if isinstance(data, csr_array | csr_matrix):
+            return torch.sparse_csr_tensor(data.indptr, data.indices, data.data, size=data.shape)
+        elif isinstance(data, csc_array | csc_matrix):
+            return torch.sparse_csc_tensor(data.indptr, data.indices, data.data, size=data.shape)
+        elif isinstance(data, coo_array | coo_matrix):
+            return torch.sparse_coo_tensor(np.stack(data.coords), data.data, size=data.shape)
+        else:
+            data = data.toarray()
+    elif data.__class__.__name__ == "ArrayView" and data.__class__.__module__.startswith("anndata"):
+        data = np.asarray(data)
+
+    return default_convert(data)
+
+
+@contextmanager
+def _replace_default_convert():
+    default_convert.__globals__["default_convert"] = _convert_to_tensor
+    yield
+    default_convert.__globals__["default_convert"] = default_convert
+
+
+def convert_to_tensor(data):
+    with _replace_default_convert():
+        return _convert_to_tensor(data)
 
 
 def filter_constant_features(data: "MofaFlexDataset"):
