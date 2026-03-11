@@ -264,14 +264,21 @@ class MuDataDatasetTest:
             sample_names = dataset.sample_names[group_name][idx[group_name]]
             assert np.all(items["sample_idx"][group_name] == idx[group_name])
             for view_name, view in group.items():
-                assert type(view) is np.ndarray
-                assert view.dtype == np.float32
-
                 feature_names = dataset.feature_names[view_name]
                 cdata = self.get_mdata_subset(
                     mdata[sample_names, feature_names], group_name=group_name, view_name=view_name
                 )
-                assert np.all(cdata.X == view)
+
+                assert view.dtype == np.float32
+                X = cdata.X
+                if not sparse.issparse(cdata.X):
+                    assert isinstance(view, np.ndarray)
+                else:
+                    assert sparse.issparse(view)
+                    X = X.toarray()
+                    view = view.toarray()
+
+                assert np.all(X == view)
 
                 cnonmissing_obs = nonmissing_to_slice(
                     np.nonzero(np.isin(sample_names, cdata.obs_names))[0], sample_names.size

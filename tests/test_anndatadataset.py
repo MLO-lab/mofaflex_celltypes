@@ -10,8 +10,12 @@ from mofaflex._core.datasets import AnnDataDataset, MofaFlexDataset
 
 
 @pytest.fixture(scope="module", params=[False, True])
-def adata(rng, request):
-    make_sparse = request.param
+def make_sparse(request):
+    return request.param
+
+
+@pytest.fixture(scope="module")
+def adata(rng, make_sparse):
     nobs = 500
     nvar = 20
     ngroups = 4
@@ -184,7 +188,7 @@ def test_index_mapping(adata, dataset, rng):
             assert np.all(global_idx[local_idx >= 0] == new_global_idx)
 
 
-def test_getitems(adata, dataset, layer, rng):
+def test_getitems(adata, make_sparse, dataset, layer, rng):
     if layer is not None:
         adata = AnnData(adata.layers[layer], obs=adata.obs, var=adata.var)
 
@@ -198,13 +202,19 @@ def test_getitems(adata, dataset, layer, rng):
         sample_names = dataset.sample_names[group_name][idx[group_name]]
         assert np.all(items["sample_idx"][group_name] == idx[group_name])
         for view_name, view in group.items():
-            assert type(view) is np.ndarray
-            assert view.dtype == np.float32
-
             feature_names = dataset.feature_names[view_name]
-            cdata = adata[sample_names, feature_names]
-            assert np.all(cdata.X == view)
+            cdata = adata[sample_names, feature_names].copy()
 
+            assert view.dtype == np.float32
+            X = cdata.X
+            if not make_sparse or layer is not None:
+                assert isinstance(view, np.ndarray)
+            else:
+                assert sparse.issparse(view)
+                X = X.toarray()
+                view = view.toarray()
+
+            assert np.all(X == view)
             assert np.all(items["nonmissing_samples"][group_name][view_name] == slice(None))
             assert items["nonmissing_features"][group_name][view_name] == slice(None)
 
@@ -349,7 +359,7 @@ def test_get_missing_obs(adata, dataset):
         assert np.all(~df.loc[dataset.sample_names[group_name], "missing"][~cmissing])
 
 
-def test_reindex_samples(adata, dataset, layer, rng):
+def test_reindex_samples(adata, make_sparse, dataset, layer, rng):
     samples1, samples2 = {}, {}
     for group_name, group_samples in dataset.sample_names.items():
         selection = rng.choice([True, False], size=len(group_samples), p=[0.5, 0.5])
@@ -360,10 +370,10 @@ def test_reindex_samples(adata, dataset, layer, rng):
         dataset.reindex_samples(samples)
         for group_name, group_samples in samples.items():
             assert np.all(dataset.sample_names[group_name] == group_samples)
-        test_getitems(adata, dataset, layer, rng)
+        test_getitems(adata, make_sparse, dataset, layer, rng)
 
 
-def test_reindex_features(adata, dataset, layer, rng):
+def test_reindex_features(adata, make_sparse, dataset, layer, rng):
     features1, features2 = {}, {}
     for view_name, view_features in dataset.feature_names.items():
         selection = rng.choice([True, False], size=len(view_features), p=[0.5, 0.5])
@@ -374,4 +384,4 @@ def test_reindex_features(adata, dataset, layer, rng):
         dataset.reindex_features(features)
         for view_name, view_features in features.items():
             assert np.all(dataset.feature_names[view_name] == view_features)
-        test_getitems(adata, dataset, layer, rng)
+        test_getitems(adata, make_sparse, dataset, layer, rng)

@@ -240,18 +240,25 @@ def test_getitems(anndata_dict, dataset, layer, rng, nonmissing_to_slice):
         sample_names = dataset.sample_names[group_name][idx[group_name]]
         assert np.all(items["sample_idx"][group_name] == idx[group_name])
         for view_name, view in group.items():
-            assert type(view) is np.ndarray
-            assert view.dtype == np.float32
-
             feature_names = dataset.feature_names[view_name]
-            cadata = anndata_dict[group_name][view_name]
+            cadata = anndata_dict[group_name][view_name].copy()
 
             cobsidx = np.isin(sample_names, cadata.obs_names)
             cvaridx = np.isin(feature_names, cadata.var_names)
 
             cobs = sample_names[cobsidx]
             cvar = feature_names[cvaridx]
-            assert np.all(cadata[cobs, cvar].X == view)
+
+            assert view.dtype == np.float32
+            X = cadata[cobs, cvar].X
+            if not sparse.issparse(cadata.X):
+                assert isinstance(view, np.ndarray)
+            else:
+                assert sparse.issparse(view)
+                X = X.toarray()
+                view = view.toarray()
+
+            assert np.all(X == view)
 
             cnonmissing_obs = np.nonzero(cobsidx)[0]
             cnonmissing_var = np.nonzero(cvaridx)[0]

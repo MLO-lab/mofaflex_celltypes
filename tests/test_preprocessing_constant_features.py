@@ -3,7 +3,7 @@ from functools import reduce
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.sparse import csc_array, csc_matrix, csr_array, csr_matrix
+from scipy.sparse import csc_array, csc_matrix, csr_array, csr_matrix, issparse
 
 from mofaflex import settings
 from mofaflex._core import MofaFlexDataset
@@ -123,7 +123,13 @@ def test_remove_constant_features(adata_dict, arrays_are, usedask):
     if arrays_are == "groups":
         arr = np.concatenate(
             [
-                dataset.align_local_array_to_global(group["view1"], group_name, "view1", align_to="features", axis=1)
+                dataset.align_local_array_to_global(
+                    arr.toarray() if issparse(arr := group["view1"]) else arr,
+                    group_name,
+                    "view1",
+                    align_to="features",
+                    axis=1,
+                )
                 for group_name, group in result.items()
             ],
             axis=0,
@@ -141,6 +147,8 @@ def test_remove_constant_features(adata_dict, arrays_are, usedask):
     else:
         for group_name, group in result.items():
             for view_name, view in group.items():
+                if issparse(view):
+                    view = view.toarray()
                 if view.shape[1] > 0:
                     assert not np.allclose(np.nanvar(view, axis=0), 0)
                 else:
