@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import builtins
 import logging
 import os
 from abc import ABC
 from collections import namedtuple
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, suppress
 from inspect import isabstract, signature
 from io import BytesIO
 from itertools import islice
+from types import MethodType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 import numpy as np
@@ -142,6 +145,8 @@ def checked_baseclass(
 
 
 class SaveStateMixin:
+    """Mixin class for stateful classes that need to save and load their state."""
+
     @classmethod
     def _get_state_attrs(cls) -> Iterable[str]:
         while cls is not None:
@@ -232,6 +237,120 @@ class SaveStateMixin:
         pass
 
 
+class _class_and_instancemethod:
+    def __init__(self, func):
+        self._func = func
+        self._clsfunc = classmethod(func)
+
+    def __get__(self, instance, owner):
+        obj = self._func if instance is not None else self._clsfunc
+        return obj.__get__(instance, owner)
+
+
+class DynamicAPIMixin:
+    """Mixin class for classes that define a subset of their API as user-facing.
+
+    The non-userfacing API is intented to be used internally in MOFA-FLEX, while the user-facing
+    API is exposed to the end user through e.g. a wrapper class. API methods and properties can
+    be defined both at the class level as well as for individual instances.
+    """
+
+    _apilist = []
+
+    @_class_and_instancemethod
+    def api(self) -> Iterable[str]:
+        """The user-facing API of class / object."""
+        return self._apilist
+
+    @_class_and_instancemethod
+    def api_methods(self) -> Iterable[str]:
+        """The user-facing methods of this class / object."""
+        return (api for api in self._apilist if not isinstance(getattr(self.__class__, api), property))
+
+    @_class_and_instancemethod
+    def api_properties(self) -> Iterable[str]:
+        """The user-facing properties of this class / object."""
+        return (api for api in self._apilist if isinstance(getattr(self.__class__, api), property))
+
+    def _api(
+        obj: Callable | property | DynamicAPIMixin | type[DynamicAPIMixin],
+        attr: MethodType | property | str | None = None,
+    ):
+        """Mark a method or property as user-facing.
+
+        Subclasses can use this to expose properties or methods to the end user.
+
+        This can be used both as a decorator and as a method.
+
+        Examples:
+            To use as a decorator:
+
+            >>> @DynamicAPIMixin._api
+            ... def foo(self, x, y):
+            ...     pass
+
+            When used with properties, it must be stacked above the property decorator:
+
+            >>> @DynamicAPIMixin._api
+            ... @property
+            ... def bar(self):
+            ...     pass
+
+            To use as a method at runtime:
+
+            >>> def baz(self, *args):
+            ...     pass
+            ...
+            ...
+            ... def foobar(self, *args):
+            ...     self._api("baz")
+
+            Alternatively:
+            >>> def foobar(self, *args):
+            ...     self._api(self.baz)
+        """
+
+        def _add_api(owner, api: str):
+            if "_apilist" not in owner.__dict__:
+                owner._apilist = owner._apilist.copy()
+            owner._apilist.append(api)
+
+        class __api:
+            def __new__(cls, func: Callable | MethodType | property):
+                if isinstance(func, MethodType):
+                    _add_api(func.__self__, func.__name__)
+                    return None
+                else:
+                    return super().__new__(cls)
+
+            def __init__(self, func: Callable | property):
+                self._func = func
+                if isinstance(func, property):
+                    self.setter = self._setter
+                    self.deleter = self._deleter
+
+            def __set_name__(self, owner, name: str):
+                _add_api(owner, name)
+                setattr(owner, name, self._func)
+
+            def _setter(self, func):
+                self._func = self._func.setter(func)
+                return self
+
+            def _deleter(self, func):
+                self._func = self._func.deleter(func)
+                return self
+
+        if isinstance(obj, Callable | property) and not isinstance(obj, __class__) and not isinstance(obj, type):
+            return __api(obj)
+        elif isinstance(attr, MethodType):
+            return __api(attr)
+        elif attr is None:
+            raise ValueError("Need attr if invoked on a DynamicAPIMixin instance.")
+        _add_api(obj, attr)
+        return obj
+
+
 @contextmanager
 def change_pyro_plate_dim(plate: pyro.plate | Iterable[pyro.plate], new_dim: int):
     if isinstance(plate, pyro.plate):
@@ -278,7 +397,7 @@ def unpickle_torch_state(state: NDArray[np.uint8], map_location=None):
     return torch.load(pkl, map_location=map_location, weights_only=True)
 
 
-def sample_all_data_as_one_batch(data: "MofaFlexDataset") -> dict[str, list[int]]:
+def sample_all_data_as_one_batch(data: MofaFlexDataset) -> dict[str, list[int]]:
     return {
         k: next(
             iter(BatchSampler(SequentialSampler(range(nsamples)), batch_size=data.n_samples_total, drop_last=False))
@@ -315,7 +434,7 @@ def convert_to_tensor(data):
         return _convert_to_tensor(data)
 
 
-def filter_constant_features(data: "MofaFlexDataset"):
+def filter_constant_features(data: MofaFlexDataset):
     nonconstantfeatures = {}
     view_vars = data.apply(lambda adata, group_name, view_name: nanvar(adata.X, axis=0), by_group=False)
     threshold = settings.get("eps")

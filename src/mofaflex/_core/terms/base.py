@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Mapping
-from types import MappingProxyType, MethodType
+from collections.abc import Iterable, Mapping
+from types import MappingProxyType
 
 import numpy as np
 import pyro
@@ -11,21 +11,11 @@ from numpy.typing import NDArray
 from pyro.nn import PyroModule, pyro_method
 
 from ..datasets import CovariatesDataset, MofaFlexDataset
-from ..utils import PyroMeta, SaveStateMixin, checked_baseclass
-
-
-class _class_and_instancemethod:
-    def __init__(self, func):
-        self._func = func
-        self._clsfunc = classmethod(func)
-
-    def __get__(self, instance, owner):
-        obj = self._func if instance is not None else self._clsfunc
-        return obj.__get__(instance, owner)
+from ..utils import DynamicAPIMixin, PyroMeta, SaveStateMixin, checked_baseclass
 
 
 @checked_baseclass(registry="dict")
-class Term(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
+class Term(SaveStateMixin, DynamicAPIMixin, ABC, PyroModule, metaclass=PyroMeta):
     r"""Base class for MOFA-FLEX additive terms.
 
     A Term represents one additive contribution to the generative model, i.e. a component of the form:
@@ -36,69 +26,6 @@ class Term(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
     Subclasses must implement a Pyro model and guide in the `model` and `guide` methods, respectively, as well as
     the `nonnegative` method. Method or properties that should be exposed to the end user must be marked with `@Term._api`.
     """
-
-    _apilist = []
-
-    @_class_and_instancemethod
-    def api(self) -> Iterable[str]:
-        """The user-facing API of this term."""
-        return self._apilist
-
-    @_class_and_instancemethod
-    def api_methods(self) -> Iterable[str]:
-        """The user-facing methods of this term."""
-        return (api for api in self._apilist if not isinstance(getattr(self.__class__, api), property))
-
-    @_class_and_instancemethod
-    def api_properties(self) -> Iterable[str]:
-        """The user-facing properties of this prior."""
-        return (api for api in self._apilist if isinstance(getattr(self.__class__, api), property))
-
-    def _api(obj: Callable | property | Term | type[Term], attr: MethodType | property | str | None = None):
-        """Mark a method or property as user-facing.
-
-        Subclasses can use this to expose properties or methods to the end user through the main model class.
-        """
-
-        def _add_api(owner, api: str):
-            if "_apilist" not in owner.__dict__:
-                owner._apilist = owner._apilist.copy()
-            owner._apilist.append(api)
-
-        class __api:
-            def __new__(cls, func: Callable | MethodType | property):
-                if isinstance(func, MethodType):
-                    _add_api(func.__self__, func.__name__)
-                    return None
-                else:
-                    return super().__new__(cls)
-
-            def __init__(self, func: Callable | property):
-                self._func = func
-                if isinstance(func, property):
-                    self.setter = self._setter
-                    self.deleter = self._deleter
-
-            def __set_name__(self, owner, name: str):
-                _add_api(owner, name)
-                setattr(owner, name, self._func)
-
-            def _setter(self, func):
-                self._func = self._func.setter(func)
-                return self
-
-            def _deleter(self, func):
-                self._func = self._func.deleter(func)
-                return self
-
-        if isinstance(obj, Callable | property) and not isinstance(obj, __class__) and not isinstance(obj, type):
-            return __api(obj)
-        elif isinstance(attr, MethodType):
-            return __api(attr)
-        elif attr is None:
-            raise ValueError("Need attr if invoked on a Term instance.")
-        _add_api(obj, attr)
-        return obj
 
     @pyro_method
     @abstractmethod
