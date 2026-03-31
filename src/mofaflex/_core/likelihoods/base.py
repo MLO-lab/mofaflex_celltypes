@@ -2,7 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 from anndata import AnnData
@@ -10,6 +10,7 @@ from array_api_compat import array_namespace
 from numpy.typing import NDArray
 from scipy.sparse import issparse
 
+from ..api.utils import DynamicAPIMixin
 from ..datasets import MofaFlexDataset
 from ..utils import SaveStateMixin, checked_baseclass
 from .pyro import Likelihood as PyroLikelihood
@@ -25,7 +26,7 @@ class R2(NamedTuple):
 @checked_baseclass(
     required_init_args=("view_name", "data", "nonnegative"), required_attributes="_priority", registry="dict"
 )
-class Likelihood(SaveStateMixin, ABC):
+class Likelihood(SaveStateMixin, DynamicAPIMixin, ABC):
     """Base class for MOFA-FLEX likelihoods.
 
     Subclasses must contain the `priority` attribute, which is used during likelihood inference to return the
@@ -47,6 +48,7 @@ class Likelihood(SaveStateMixin, ABC):
         super().__init__()
         self._view_name = view_name
         self._nonnegative = nonnegative
+        self._feature_names = data.feature_names[view_name]
 
     def get_pyro_likelihood(self, data: MofaFlexDataset, sample_dim: int, feature_dim: int):
         """Set up a Pyro likelihood object.
@@ -229,12 +231,10 @@ class Likelihood(SaveStateMixin, ABC):
         )
         return max(0.0, 1.0 - r2.ss_res / r2.ss_tot)
 
+    def _load(self, state: Mapping[str, Any], feature_names: NDArray[str], **kwargs):
+        self._feature_names = feature_names
+
     @classmethod
     def known_likelihoods(cls) -> Mapping[str, type["Likelihood"]]:
         """Get all known likelihoods."""
         return MappingProxyType(__class__._registry)
-
-    @property
-    def dispersion(self):
-        """Get the estimated dispersion."""
-        pass

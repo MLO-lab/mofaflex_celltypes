@@ -3,6 +3,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from inspect import Parameter, signature
 
+from ..utils import building_docs
+from .utils import DynamicAPIMixin
+
 
 class APIWrapper(ABC):
     @abstractmethod
@@ -73,6 +76,10 @@ def init_api(
             subname, (basewrapper,), {"_cls": subcls, "__init__": init, "__call__": call, "__module__": module}
         )
         apicls.__doc__ = subcls.__doc__ if doc_callback is None else doc_callback(subcls.__doc__, subcls)
+
+        if building_docs() and issubclass(basecls, DynamicAPIMixin):
+            for api in subcls.api():
+                setattr(apicls, api, getattr(subcls, api))
 
         setattr(mod, subname, apicls)
         all_.append(subname)

@@ -10,8 +10,9 @@ import torch
 from numpy.typing import NDArray
 from pyro.nn import PyroModule, pyro_method
 
+from ..api.utils import DynamicAPIMixin
 from ..datasets import CovariatesDataset, MofaFlexDataset
-from ..utils import DynamicAPIMixin, PyroMeta, SaveStateMixin, checked_baseclass
+from ..utils import PyroMeta, SaveStateMixin, checked_baseclass
 
 
 @checked_baseclass(registry="dict")
