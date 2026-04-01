@@ -37,12 +37,14 @@ class DynamicAPIMixin:
     @_class_and_instancemethod
     def api_methods(self) -> Iterable[str]:
         """The user-facing methods of this class / object."""
-        return (api for api in self._apilist if not isinstance(getattr(self.__class__, api), property))
+        obj = self.__class__ if isinstance(self, __class__) else self
+        return (api for api in self._apilist if not isinstance(getattr(obj, api, None), property))
 
     @_class_and_instancemethod
     def api_properties(self) -> Iterable[str]:
         """The user-facing properties of this class / object."""
-        return (api for api in self._apilist if isinstance(getattr(self.__class__, api), property))
+        obj = self.__class__ if isinstance(self, __class__) else self
+        return (api for api in self._apilist if isinstance(getattr(obj, api, None), property))
 
     def _api(
         obj: Callable | property | DynamicAPIMixin | type[DynamicAPIMixin],
