@@ -248,7 +248,12 @@ class MuDataDatasetTest:
                     varm=adata.varm,
                 )
             new_mdata = MuData(
-                mods, obs=mdata.obs, var=mdata.var, obsmap=mdata.obsmap, varmap=mdata.varmap, axis=mdata.axis
+                mods,
+                obs=mdata.obs,
+                var=mdata.var,
+                obsmap=dict(mdata.obsmap),
+                varmap=dict(mdata.varmap),
+                axis=mdata.axis,
             )
             new_mdata.obs = mdata.obs
             new_mdata.var = mdata.var
