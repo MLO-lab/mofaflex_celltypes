@@ -116,6 +116,10 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
         return self._terms
 
     @property
+    def likelihoods(self) -> Mapping[str, Likelihood]:
+        return self._likelihoods
+
+    @property
     def _group_names(self) -> Sequence[str]:
         return self._n_samples.keys()
 
@@ -462,21 +466,6 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
             ),
         )
 
-    def get_dispersion(
-        self, feature_names: Mapping[str, NDArray[str]], moment: Literal["mean", "std"] = "mean"
-    ) -> dict[str, pd.Series]:
-        """Get the dispersion vectors for each view.
-
-        Args:
-            feature_names: Feature names for each view
-            moment: Which moment of the posterior distribution to return.
-        """
-        return {
-            view_name: pd.Series(getattr(dispersion, moment), index=feature_names[view_name])
-            for view_name, likelihood in self._likelihoods.items()
-            if (dispersion := likelihood.dispersion) is not None
-        }
-
     def _impute(
         self, data: AnnData, group_name, view_name, sample_names, feature_names, likelihood, missingonly, preprocessor
     ):
@@ -549,7 +538,7 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
 
     def _load(
         self,
-        state: dict[str, Any],
+        state: Mapping[str, Any],
         sample_names: Mapping[str, NDArray[str]],
         feature_names: Mapping[str, NDArray[str]],
         n_samples: Mapping[str, int],
@@ -572,6 +561,6 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
             }
         )
         self._likelihoods = {
-            view_name: Likelihood.load(likelihood, map_location=map_location)
+            view_name: Likelihood.load(likelihood, feature_names=feature_names, map_location=map_location)
             for view_name, likelihood in state["likelihoods"].items()
         }

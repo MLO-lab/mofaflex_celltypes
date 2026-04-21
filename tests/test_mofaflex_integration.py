@@ -83,8 +83,8 @@ def model_api_trained_only():
         "n_samples_total",
         "training_loss",
         "terms",
+        "likelihoods",
         "get_r2",
-        "get_dispersion",
     )
 
 

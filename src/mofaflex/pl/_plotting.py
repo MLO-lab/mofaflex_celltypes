@@ -60,7 +60,7 @@ def _covariate_df(data, key, axis=0):
 
 
 def factors_scatter(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     x: int | str,
     y: int | str,
     groups: str | Sequence[str] | None = None,
@@ -143,7 +143,7 @@ def factors_scatter(
 
 
 def _plot_covariates_scatter(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     axis: Literal[0, 1],
     factor: int | str,
     groups: str | Sequence[str] | None = None,
@@ -234,7 +234,7 @@ def _plot_covariates_scatter(
 
 
 def covariates_factor_scatter(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     factor: int | str,
     groups: str | Sequence[str] | None = None,
     covariate_dims: int | str | Sequence[int] | Sequence[str] | None = None,
@@ -277,7 +277,7 @@ def covariates_factor_scatter(
 
 
 def covariates_weight_scatter(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     factor: int | str,
     groups: str | Sequence[str] | None = None,
     covariate_dims: int | str | Sequence[int] | Sequence[str] | None = None,
@@ -342,7 +342,7 @@ def training_curve(
     return plot
 
 
-def factor_correlation(model: types.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = (8, 8)) -> p9.ggplot:
+def factor_correlation(model: types.terms.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = (8, 8)) -> p9.ggplot:
     """Plot the correlation between factors.
 
     Args:
@@ -500,7 +500,7 @@ def variance_explained(
 
 
 def factor_significance(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     n_factors: int | None = None,
     views: str | Sequence[str] | None = None,
     groups: str | Sequence[str] | None = None,
@@ -608,7 +608,7 @@ def factor_significance(
 
 
 def all_weights(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     views: str | Sequence[str] | None = None,
     clip: tuple[float, float] | None = (-1, 1),
     show_featurenames: bool = False,
@@ -657,7 +657,7 @@ def all_weights(
 
 
 def factor(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     factor: int | str = 1,
     show_samplenames: bool = False,
     figsize: tuple[float, float] | None = None,  # F821
@@ -784,7 +784,7 @@ def _plot_covariate(
 
 
 def factors_covariate(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     covariate1: str | int,
     covariate2: str | int | None = None,
     size: int = 1,
@@ -812,7 +812,7 @@ def factors_covariate(
 
 
 def weights_covariate(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     covariate1: str | int,
     covariate2: str | int | None = None,
     size: int = 1,
@@ -915,7 +915,7 @@ def _plot_gp_covariate(
 
 
 def factor_gp_covariates(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     ci_opacity: float = 0.3,
     group: Literal["facet", "color"] = "facet",
     color: str = "black",
@@ -949,7 +949,7 @@ def factor_gp_covariates(
 
 
 def weight_gp_covariates(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     ci_opacity: float = 0.3,
     group: Literal["facet", "color"] = "facet",
     color: str = "black",
@@ -998,7 +998,7 @@ def _plot_gp_smoothness(
     return plt
 
 
-def factor_gp_smoothness(model: types.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = (3, 3)) -> p9.gglot:
+def factor_gp_smoothness(model: types.terms.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = (3, 3)) -> p9.gglot:
     """Plot the smoothness of the GP for each factor.
 
     Args:
@@ -1008,7 +1008,7 @@ def factor_gp_smoothness(model: types.MofaFlex | MOFAFLEX, figsize: tuple[float,
     return _plot_gp_smoothness(model.factor_gp_scale, model.factor_names, figsize)
 
 
-def weight_gp_smoothness(model: types.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = (3, 3)) -> p9.gglot:
+def weight_gp_smoothness(model: types.terms.MofaFlex | MOFAFLEX, figsize: tuple[float, float] = (3, 3)) -> p9.gglot:
     """Plot the smoothness of the GP for each factor.
 
     Args:
@@ -1019,7 +1019,7 @@ def weight_gp_smoothness(model: types.MofaFlex | MOFAFLEX, figsize: tuple[float,
 
 
 def _prepare_weights_df(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     n_features: int = 10,
     views: str | Sequence[str] | None = None,
     factors: int | str | Sequence[int] | Sequence[str] | None = None,
@@ -1086,7 +1086,7 @@ _weights_inferred_color_scale = p9.scale_color_manual(
 
 
 def top_weights(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     n_features: int = 10,
     views: str | Sequence[str] | None = None,
     factors: int | str | Sequence[int] | Sequence[str] | None = None,
@@ -1142,7 +1142,7 @@ def top_weights(
 
 
 def weights(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     n_features: int = 10,
     views: str | Sequence[str] | None = None,
     factors: int | str | Sequence[int] | Sequence[str] | None = None,
@@ -1246,7 +1246,7 @@ def _plot_sparse_probabilities_histogram(
 
 
 def weight_sparsity_histogram(
-    model: types.MofaFlex | MOFAFLEX, bins: int = 50, nrow: int | None = None, ncol: int | None = None
+    model: types.terms.MofaFlex | MOFAFLEX, bins: int = 50, nrow: int | None = None, ncol: int | None = None
 ):
     """Plot a histogram of probabilities that weights are non-zero for views with SnS prior.
 
@@ -1266,7 +1266,7 @@ def weight_sparsity_histogram(
 
 
 def factor_sparsity_histogram(
-    model: types.Mofaflex | MOFAFLEX, bins: int = 50, nrow: int | None = None, ncol: int | None = None
+    model: types.terms.Mofaflex | MOFAFLEX, bins: int = 50, nrow: int | None = None, ncol: int | None = None
 ):
     """Plot a histogram of probabilities that factors are non-zero for views with SnS prior.
 

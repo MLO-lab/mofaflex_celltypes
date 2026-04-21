@@ -24,12 +24,13 @@ from tqdm.auto import tqdm
 from tqdm.notebook import tqdm_notebook
 
 from .. import pl
+from .api import types
 from .api.likelihoods import Likelihood as APILikelihood
+from .api.utils import DynamicAPIWrapper
 from .datasets import MofaFlexBatchSampler, MofaFlexDataset, StackDataset
 from .io import load_model, save_model
 from .likelihoods import LikelihoodType
 from .model import MofaFlexModel
-from .terms import Term, TermWrapper
 from .training import EarlyStopper
 from .utils import convert_to_tensor, default_torch_device, filter_constant_features, sample_all_data_as_one_batch
 
@@ -83,7 +84,7 @@ class MOFAFLEX:
     This class is not meant to be instantiated by the user. Rather, it is created by instantiating a :mod:`term <.terms>`.
     """
 
-    def __init__(self, **kwargs: Term):
+    def __init__(self, **kwargs: types.terms.Term):
         self._terms = kwargs
 
     def __add__(self, other: "MOFAFLEX"):
@@ -212,9 +213,15 @@ class MOFAFLEX:
 
     @property
     @_check_trained
-    def terms(self) -> Mapping[str, Term]:
+    def terms(self) -> Mapping[str, types.terms.Term]:
         """The additive terms."""
         return MappingProxyType(self._wrapped_terms)
+
+    @property
+    @_check_trained
+    def likelihoods(self) -> Mapping[str, types.likelihoods.Likelihood]:
+        """The likelihoods."""
+        return MappingProxyType(self._wrapped_likelihoods)
 
     @property
     def n_terms(self) -> int:
@@ -225,7 +232,11 @@ class MOFAFLEX:
             return len(self._terms)
 
     def _init_api(self):
-        self._wrapped_terms = {name: TermWrapper(self, term) for name, term in self._model.terms.items()}
+        self._wrapped_terms = {name: DynamicAPIWrapper(self, term) for name, term in self._model.terms.items()}
+        self._wrapped_likelihoods = {
+            name: DynamicAPIWrapper(self, likelihood, forward=False)
+            for name, likelihood in self._model.likelihoods.items()
+        }
 
     @_check_trained(is_trained=False)
     def fit(

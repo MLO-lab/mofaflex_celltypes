@@ -15,7 +15,7 @@ _logger = logging.getLogger(__name__)
 
 
 def test_annotation_significance(
-    model: types.MofaFlex | MOFAFLEX,
+    model: types.terms.MofaFlex | MOFAFLEX,
     annotations: dict[str, pd.DataFrame],
     data: MuData | dict[str, dict[str, AnnData]] | AnnData | MofaFlexDataset | None = None,
     corr_adjust: bool = True,

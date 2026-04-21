@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import builtins
 import logging
 import os
@@ -142,6 +144,8 @@ def checked_baseclass(
 
 
 class SaveStateMixin:
+    """Mixin class for stateful classes that need to save and load their state."""
+
     @classmethod
     def _get_state_attrs(cls) -> Iterable[str]:
         while cls is not None:
@@ -278,7 +282,7 @@ def unpickle_torch_state(state: NDArray[np.uint8], map_location=None):
     return torch.load(pkl, map_location=map_location, weights_only=True)
 
 
-def sample_all_data_as_one_batch(data: "MofaFlexDataset") -> dict[str, list[int]]:
+def sample_all_data_as_one_batch(data: MofaFlexDataset) -> dict[str, list[int]]:
     return {
         k: next(
             iter(BatchSampler(SequentialSampler(range(nsamples)), batch_size=data.n_samples_total, drop_last=False))
@@ -315,7 +319,7 @@ def convert_to_tensor(data):
         return _convert_to_tensor(data)
 
 
-def filter_constant_features(data: "MofaFlexDataset"):
+def filter_constant_features(data: MofaFlexDataset):
     nonconstantfeatures = {}
     view_vars = data.apply(lambda adata, group_name, view_name: nanvar(adata.X, axis=0), by_group=False)
     threshold = settings.get("eps")

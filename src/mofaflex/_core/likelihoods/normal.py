@@ -1,4 +1,7 @@
+from typing import Literal
+
 import numpy as np
+import pandas as pd
 from anndata import AnnData
 from array_api_compat import array_namespace
 from numpy.typing import NDArray
@@ -125,6 +128,11 @@ class Normal(Likelihood):
             scale = self._scale
         return data - self._shift[group_name][feature_idx] / scale
 
-    @property
-    def dispersion(self):
-        return self._dispersion
+    @Likelihood._api
+    def get_dispersion(self, moment: Literal["mean", "std"] = "mean") -> pd.Series:
+        """Get the dispersion vectors for each view.
+
+        Args:
+            moment: Which moment of the posterior distribution to return.
+        """
+        return pd.Series(getattr(self._dispersion, moment), index=self._feature_names)
