@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 - The MOFA compatibility mode for saving a trained model.
 
-## [0.1.1] (Unreleased)
+## [0.1.1]
 
 ### Added
 - `tl.factor_correlation` to calculate the correlation between factors.
