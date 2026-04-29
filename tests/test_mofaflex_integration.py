@@ -341,6 +341,7 @@ def test_integration_dynamicapi_multiple_priors(anndata_dict, tmp_path, n_partic
     signif = model.get_significant_annotations()
     assert len(signif) == 1
     assert next(iter(signif.keys())) == "view_normal"
+    assert signif["view_normal"]["factor"].cat.categories.size == 11
 
 
 @pytest.mark.parametrize("usedask", [False, True])

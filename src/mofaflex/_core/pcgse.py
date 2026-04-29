@@ -214,5 +214,7 @@ def pcgse_test(
                         for name, df in cresult.items()
                     ]
                     view_results.append(pd.concat(dfs, axis=1).reset_index(drop=False).assign(sign=sign))
-            results[view_name] = pd.concat(view_results, axis=0, ignore_index=True)
+            results[view_name] = pd.concat(view_results, axis=0, ignore_index=True).assign(
+                factor=lambda x: pd.Categorical(x["factor"]), sign=lambda x: pd.Categorical(x["sign"])
+            )
     return results
