@@ -318,6 +318,31 @@ def test_integration_constantprior(anndata_dict, tmp_path, n_particles, batch_si
         assert np.all(view_weights == weights2[view_name])
 
 
+@pytest.mark.parametrize("n_particles", [1, 5])
+@pytest.mark.parametrize("batch_size", [0, 257])
+def test_integration_dynamicapi_multiple_priors(anndata_dict, tmp_path, n_particles, batch_size):
+    model = terms.MofaFlex(
+        n_factors=1,
+        weight_prior={
+            "view_normal": priors.InformedHorseshoe(annotations_varm_key="annot_df"),
+            "view_negativebinomial": priors.Horseshoe(),
+            "view_bernoulli": priors.Normal(),
+        },
+    )
+    with chdir(tmp_path):
+        model.fit(
+            anndata_dict,
+            plot_data_overview=False,
+            max_epochs=2,
+            seed=42,
+            batch_size=batch_size,
+            n_particles=n_particles,
+        )
+    signif = model.get_significant_annotations()
+    assert len(signif) == 1
+    assert next(iter(signif.keys())) == "view_normal"
+
+
 @pytest.mark.parametrize("usedask", [False, True])
 def test_imputation(rng, anndata_dict, usedask):
     with warnings.catch_warnings():

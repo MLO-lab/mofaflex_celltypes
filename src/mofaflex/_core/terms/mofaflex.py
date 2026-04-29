@@ -200,7 +200,7 @@ class MofaFlex(Term):
                             self._wrap_api_method(axis, prior, api) for prior in gpriors
                         )
                     else:
-                        wrapped = self._wrap_api_method(axis, prior, api)
+                        wrapped = self._wrap_api_method(axis, gpriors[0], api)
                     dummy = getattr(self.__class__, name)
                     update_wrapper(wrapped, dummy)
                     setattr(self, name, wrapped.__get__(self))
