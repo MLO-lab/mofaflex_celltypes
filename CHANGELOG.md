@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 - The MOFA compatibility mode for saving a trained model.
 
+## [0.1.2] (Unreleased)
+
+### Fixed
+- Using a MuData `.obs` column as a guiding variable now works
+- When using guiding variables together with annotations, the data frame returned by `get_annotations` now has a correct row index.
+
 ## [0.1.1]
 
 ### Added
