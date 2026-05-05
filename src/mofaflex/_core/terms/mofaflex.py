@@ -318,6 +318,7 @@ class MofaFlex(Term):
                     obs_key: dict.fromkeys(data.group_names, obs_key) for obs_key in self._guiding_vars_obs_keys
                 }
             self._guiding_vars_names = list(self._guiding_vars_obs_keys.keys())
+            self._factor_names = self._factor_names + self._guiding_vars_names
 
             if isinstance(self._guiding_vars_likelihoods, str):
                 self._guiding_vars_likelihoods = dict.fromkeys(self._guiding_vars_names, self._guiding_vars_likelihoods)
@@ -487,10 +488,8 @@ class MofaFlex(Term):
     def on_train_start(self, data: MofaFlexDataset, sample_plate_dim: int, feature_plate_dim: int):
         if self.n_guided_factors > 0:
             self._init_guiding_vars(data)
-            self._factor_names = np.concatenate((self._factor_names, self._guiding_vars_names))
-        else:
-            self._factor_names = np.asarray(self._factor_names)
-        self._factor_order = np.arange(self._n_factors)
+        self._factor_names = np.asarray(self._factor_names)
+        self._factor_order = np.arange(self.n_total_factors)
 
         if self._init_factors is not None:
             # need to call contiguous() here, otherwise we get a warning from PyTorch:
