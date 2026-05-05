@@ -421,8 +421,9 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
             ret = self._r2_term_components[term]
             if ordered:
                 ret = (
-                    ret.groupby(["group", "view"], sort=False, as_index=False, group_keys=False)
-                    .apply(lambda df: df.iloc[self._terms[term].component_order, :])
+                    ret.groupby(["group", "view"], sort=False)
+                    .apply(lambda df: df.iloc[self._terms[term].component_order, :], include_groups=False)
+                    .reset_index(level=(0, 1))
                     .reset_index(drop=True)
                 )
             return ret
@@ -432,8 +433,9 @@ class MofaFlexModel(SaveStateMixin, PyroModule):
             return (
                 self._r2_terms
                 if not ordered
-                else self._r2_terms.groupby(["group", "view"], sort=False, as_index=False, group_keys=False)
-                .apply(lambda df: df.iloc[self._term_order, :])
+                else self._r2_terms.groupby(["group", "view"], sort=False)
+                .apply(lambda df: df.iloc[self._term_order, :], include_groups=False)
+                .reset_index(level=(0, 1))
                 .reset_index(drop=True)
             )
         else:
