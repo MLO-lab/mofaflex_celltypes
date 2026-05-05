@@ -318,6 +318,9 @@ class MofaFlex(Term):
                     obs_key: dict.fromkeys(data.group_names, obs_key) for obs_key in self._guiding_vars_obs_keys
                 }
             self._guiding_vars_names = list(self._guiding_vars_obs_keys.keys())
+
+            if isinstance(self._guiding_vars_likelihoods, str):
+                self._guiding_vars_likelihoods = dict.fromkeys(self._guiding_vars_names, self._guiding_vars_likelihoods)
         else:
             self._guiding_vars_names = []
 
