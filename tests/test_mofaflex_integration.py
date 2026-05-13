@@ -344,6 +344,40 @@ def test_integration_dynamicapi_multiple_priors(anndata_dict, tmp_path, n_partic
     assert signif["view_normal"]["factor"].cat.categories.size == 11
 
 
+@pytest.mark.parametrize("n_particles", [1, 5])
+@pytest.mark.parametrize("batch_size", [0, 257])
+def test_integration_informedhs_guidingvars(anndata_dict, tmp_path, n_particles, batch_size):
+    for group in anndata_dict.values():
+        group["view_normal"].varm["annot_normal"] = group["view_normal"].varm["annot_df"]
+        group["view_negativebinomial"].varm["annot_negativebinomial"] = group["view_negativebinomial"].varm["annot_df"]
+        group["view_bernoulli"].varm["annot_bernoulli"] = group["view_bernoulli"].varm["annot_df"]
+
+    model = terms.MofaFlex(
+        n_factors=3,
+        weight_prior={
+            "view_normal": priors.InformedHorseshoe(annotations_varm_key="annot_normal"),
+            "view_negativebinomial": priors.InformedHorseshoe(annotations_varm_key="annot_negativebinomial"),
+            "view_bernoulli": priors.InformedHorseshoe(annotations_varm_key="annot_bernoulli"),
+        },
+        guiding_vars_obs_keys=["gvar_categorical"],
+        guiding_vars_likelihoods="Categorical",
+        nonnegative_factors=True,
+        nonnegative_weights=True,
+    )
+    with chdir(tmp_path):
+        model.fit(
+            anndata_dict,
+            plot_data_overview=False,
+            max_epochs=2,
+            seed=42,
+            batch_size=batch_size,
+            n_particles=n_particles,
+        )
+
+    assert model.n_total_factors == 34
+    assert model.factor_names.shape == np.unique(model.factor_names).shape
+
+
 @pytest.mark.parametrize("usedask", [False, True])
 def test_imputation(rng, anndata_dict, usedask):
     with warnings.catch_warnings():
