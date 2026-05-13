@@ -112,7 +112,7 @@ def _test_single_view(
     adjust_p = p_adj_method is not None
     if adjust_p:
         prob_adj_df = prob_df.apply(
-            lambda p: multitest.multipletests(p, method=p_adj_method)[1], axis=1, result_type="broadcast"
+            lambda p: pd.Series(multitest.multipletests(p, method=p_adj_method)[1], index=p.index), axis=1
         )
 
     if sign != "all":

@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 
 import mofaflex as mfl
@@ -72,6 +73,21 @@ def test_test_single_view_empty(mousebrain_model):
         )
         is None
     )
+
+
+def test_test_single_view_repeated_factor_names(mousebrain_model):
+    factors = mousebrain_model.get_weights()["view_1"]
+    result = _test_single_view(
+        "view_1",
+        nonnegative_weights=True,
+        feature_sets=mousebrain_model.get_annotations()["view_1"],
+        factor_loadings=pd.concat((factors, factors), axis=1),
+        y=None,
+        sign="pos",
+        corr_adjust=False,
+    )
+    for df in result.values():
+        assert df.shape[0] == factors.shape[1] * 2
 
 
 @pytest.mark.parametrize("sign", ("pos", "neg", "all"))
