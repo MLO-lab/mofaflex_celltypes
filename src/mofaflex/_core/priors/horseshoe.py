@@ -157,7 +157,12 @@ class InformedHorseshoe(Horseshoe):
         "_pcgse",
     )
 
-    def __init__(self, names: str | Sequence[str], annotations_varm_key: str, annotation_confidence: float = 0.99):
+    def __init__(
+        self,
+        names: str | Sequence[str],
+        annotations_varm_key: str | Mapping[str, str],
+        annotation_confidence: float = 0.99,
+    ):
         super().__init__(names)
 
         self._annotations_varm_key = annotations_varm_key
