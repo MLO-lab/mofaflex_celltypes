@@ -278,24 +278,18 @@ class MofaFlex(Term):
         ):
             priors = getattr(self, priorattr)
             if isinstance(priors, str):
-                priors = [Prior(priors, names)]
+                priorlist = [Prior(priors, names)]
             elif isinstance(priors, apipriors.Prior):
-                priors = [priors(names)]
+                priorlist = [priors(names)]
             else:
-                prior_groups = defaultdict(list)
-                for group_name, prior in priors.items():
-                    if isinstance(group_name, str):
-                        prior_groups[prior].append(group_name)
+                priorlist = []
+                for pnames, prior in priors.items():
+                    if isinstance(prior, str):
+                        prior = Prior(prior, pnames)
                     else:
-                        prior_groups[prior].extend(group_name)
-                priors = []
-                for priorname, names in prior_groups.items():
-                    if isinstance(priorname, str):
-                        prior = Prior(priorname, names)
-                    else:
-                        prior = priorname(names)
-                    priors.append(prior)
-            setattr(self, priorattr, PyroModuleList(priors))
+                        prior = prior(pnames)
+                    priorlist.append(prior)
+            setattr(self, priorattr, PyroModuleList(priorlist))
         for prior in self._factor_priors:
             if not prior.factors_allowed():
                 raise ValueError(f"The prior {prior.__class__.__name__} cannot be used for factors.")

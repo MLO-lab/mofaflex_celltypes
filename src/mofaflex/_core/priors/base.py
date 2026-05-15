@@ -74,7 +74,7 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
 
     def __init__(self, names: str | Sequence[str]):
         super().__init__()
-        self._names = (names,) if isinstance(names, str) else names
+        self._names = [names] if isinstance(names, str) else list(names)
 
     @classmethod
     def factors_allowed(cls):
