@@ -223,7 +223,7 @@ class InformedHorseshoe(Horseshoe):
 
         return {"hs_prior_scales": prior_scales}
 
-    def adjust_factors(self, data: MofaFlexDataset, axis: Literal[0, 1], factors: list[str]) -> list[str]:
+    def extend_factors(self, data: MofaFlexDataset, axis: Literal[0, 1], n_factors: int) -> list[str]:
         annotations = data.get_covariates(
             axis,
             mkey=self._annotations_varm_key,
@@ -242,23 +242,18 @@ class InformedHorseshoe(Horseshoe):
                     .rename_axis(index=None)
                 )
             if pd.api.types.is_integer_dtype(annot.columns.dtype):
-                self._annotations_names = pd.Index([f"Informed Factor {i + 1}" for i in range(annot.shape[1])])
+                annotations_names = [f"Informed Factor {i + 1}" for i in range(annot.shape[1])]
             else:
-                self._annotations_names = annot.columns
+                annotations_names = annot.columns.to_list()
             annotations[name] = annot.to_numpy()
         if len(annotations) == 0:
             raise ValueError("No annotations found.")
 
-        self._annotations_names = self._annotations_names.where(
-            self._annotations_names.isin(set(factors)), "_".join(self.names) + "_" + self._annotations_names
-        )
-
         self._annotations = annotations
-        self._informed_factors_start_idx = len(factors)
-        self._n_informed_factors = len(self._annotations_names)
-        factors.extend(self._annotations_names)
+        self._informed_factors_start_idx = n_factors
+        self._n_informed_factors = len(annotations_names)
 
-        return factors
+        return annotations_names
 
     def on_train_end(
         self,
@@ -273,7 +268,13 @@ class InformedHorseshoe(Horseshoe):
             data,
             nonnegative_weights=results_nonnegative,
             annotations={
-                name: pd.DataFrame(annot, index=nonfactor_names[name], columns=self._annotations_names)
+                name: pd.DataFrame(
+                    annot,
+                    index=nonfactor_names[name],
+                    columns=factor_names[
+                        self._informed_factors_start_idx : (self._informed_factors_start_idx + self._n_informed_factors)
+                    ],
+                )
                 for name, annot in self._annotations.items()
             },
             weights={

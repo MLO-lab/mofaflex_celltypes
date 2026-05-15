@@ -174,8 +174,8 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
         """
         pass
 
-    def adjust_factors(self, data: MofaFlexDataset, axis: Literal[0, 1], factors: list[str]) -> list[str]:
-        """Adjust the number and/or names of the factors in the model.
+    def extend_factors(self, data: MofaFlexDataset, axis: Literal[0, 1], n_factors: int) -> Sequence[str]:
+        """Add addtional factors to the model.
 
         If a subclass needs to add additional factors to the entire model, this is the place to do it. The subclass should
         store the indices of the factors it added if those need special treatment during training. This is guaranteed to be
@@ -184,12 +184,12 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
         Args:
             data: The dataset.
             axis: The axis of this prior (0 for samples, 1 for features).
-            factors: A list of factor names.
+            n_factors: The number of factors already in the model.
 
         Returns:
-            A list of factor names.
+            A sequence of factor names to be added to the model.
         """
-        return factors
+        return []
 
     def postprocess_results(
         self, results: MeanStd, moment: Literal["mean", "std"] = "mean", name: str | None = None, **kwargs

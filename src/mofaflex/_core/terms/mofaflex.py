@@ -371,9 +371,15 @@ class MofaFlex(Term):
         self._init(data)
 
         ret = defaultdict(dict)
+        factor_names = set(self._factor_names)
         for axis, priors in ((0, self._factor_priors), (1, self._weight_priors)):
             for prior in priors:
-                self._factor_names = prior.adjust_factors(data, axis, self._factor_names)
+                if len(new_factors := prior.extend_factors(data, axis, len(self._factor_names))) > 0:
+                    prefix = "_".join(prior.names) + "_"
+                    new_factors = [prefix + fname if fname in factor_names else fname for fname in new_factors]
+                    self._factor_names += new_factors
+                    factor_names |= set(new_factors)
+        self._make_factor_names_unique()
 
         for prior in self._factor_priors:
             if priordsets := prior.get_datasets(data, 0, self.n_total_factors, data.n_samples):
@@ -848,6 +854,14 @@ class MofaFlex(Term):
         weights = self._get_postprocessed_weights(moment, **kwargs)
         return self._results_to_df(weights, axis=1, ordered=ordered)
 
+    def _make_factor_names_unique(self):
+        namescounter = Counter(self._factor_names)
+        seen = defaultdict(lambda: 1)
+        for i, fname in enumerate(self._factor_names):
+            if namescounter[fname] > 1:
+                self._factor_names[i] = f"{fname}-{seen[fname]}"
+                seen[fname] += 1
+
 
 # init API for docs
 def _init_api():
@@ -888,9 +902,7 @@ def _init_api():
         (0, "factor", Prior.known_priors("factors")),
         (1, "weight", Prior.known_priors("weights")),
     ):
-        namescount = Counter()
-        for api in chain(*(x.api() for x in priors.values())):
-            namescount[api.name] += 1
+        namescount = Counter(api.name for api in chain(*(x.api() for x in priors.values())))
         duplicates = {k for k, v in namescount.items() if v > 1}
 
         for prior, priorcls in priors.items():
