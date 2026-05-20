@@ -125,7 +125,7 @@ class CovariatesDataset(Dataset):
     __getitems__ = __getitem__
 
 
-class StackDataset:
+class StackDataset(Dataset):
     def __init__(self, *args, **kwargs):
         if args:
             if kwargs:
