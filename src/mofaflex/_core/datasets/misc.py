@@ -77,9 +77,9 @@ def merge_covariates(covariates: Mapping[str, Mapping[str, pd.DataFrame]]):
             or pd.api.types.is_integer_dtype(group_covariates.dtypes.iloc[0])
             and np.all(group_covariates.iloc[:, 0] >= 0)
         ):
-            cov = group_covariates.groupby("sample").first()
+            cov = group_covariates.groupby("sample", observed=True).first()
         else:
-            cov = group_covariates.groupby("sample").mean()
+            cov = group_covariates.groupby("sample", observed=True).mean()
         cov.rename_axis(index=None, inplace=True)
         merged_covariates[group_name] = dataframe_to_numpy_dtypes(cov)
     return merged_covariates
