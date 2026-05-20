@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 from numpy.typing import NDArray
-from torch.utils.data import BatchSampler, Dataset, RandomSampler, Sampler, StackDataset
+from torch.utils.data import BatchSampler, Dataset, RandomSampler, Sampler
 
 from .utils import dataframe_to_numpy_dtypes
 
@@ -125,7 +125,17 @@ class CovariatesDataset(Dataset):
     __getitems__ = __getitem__
 
 
-class StackDataset(StackDataset):
+class StackDataset:
+    def __init__(self, *args, **kwargs):
+        if args:
+            if kwargs:
+                raise ValueError("Requires either args or kwargs, but both are given.")
+            self.datasets = args
+        elif kwargs:
+            self.datasets = kwargs
+        else:
+            raise ValueError("At least one dataset should be passed.")
+
     def __getitems__(self, idx: Sequence | Mapping):
         if isinstance(idx, Sequence):
             return super().__getitems__(idx)

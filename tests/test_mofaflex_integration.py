@@ -1,4 +1,5 @@
 # integration tests: only testing if the code runs without errors
+import builtins
 import warnings
 from collections.abc import Mapping, Sequence
 from contextlib import chdir
@@ -376,6 +377,38 @@ def test_integration_informedhs_guidingvars(anndata_dict, tmp_path, n_particles,
 
     assert model.n_total_factors == 34
     assert model.factor_names.shape == np.unique(model.factor_names).shape
+
+
+@pytest.mark.parametrize("n_particles", [1, 5])
+@pytest.mark.parametrize("batch_size", [0, 257])
+@pytest.mark.parametrize("select", ["max", "min"])
+def test_integration_covariates_singlegroup(anndata_dict, tmp_path, select, n_particles, batch_size):
+    selected_group = getattr(builtins, select)(
+        (
+            (group_name, len(reduce(lambda x, y: x.union(y), (view.obs_names for view in group.values()))))
+            for group_name, group in anndata_dict.items()
+        ),
+        key=lambda x: x[1],
+    )[0]
+    for adata in anndata_dict[selected_group].values():
+        adata.obs["test_covar"] = adata.obs["covar"]
+
+    factor_prior = {group_name: "Normal" for group_name in anndata_dict.keys() if group_name != selected_group}
+    factor_prior[selected_group] = priors.GaussianProcess(covariates_key="test_covar")
+
+    model = terms.MofaFlex(n_factors=5, factor_prior=factor_prior)
+
+    with chdir(tmp_path):
+        model.fit(
+            anndata_dict,
+            plot_data_overview=False,
+            max_epochs=2,
+            seed=42,
+            batch_size=batch_size,
+            n_particles=n_particles,
+        )
+
+    assert list(model.factor_covariates.keys()) == [selected_group]
 
 
 @pytest.mark.parametrize("usedask", [False, True])
