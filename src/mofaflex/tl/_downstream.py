@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 
 import numpy as np
@@ -72,7 +74,7 @@ def test_annotation_significance(
         return {}
 
 
-def factor_correlation(model: MOFAFLEX) -> dict[str, pd.DataFrame]:
+def factor_correlation(model: types.terms.MofaFlex | MOFAFLEX) -> dict[str, pd.DataFrame]:
     """Calculate the correlation between factors.
 
     Args:

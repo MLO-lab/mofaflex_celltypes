@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import builtins
 import logging
-import os
 from abc import ABC
 from collections import namedtuple
 from collections.abc import Iterable, Mapping, Sequence
@@ -248,27 +246,6 @@ def change_pyro_plate_dim(plate: pyro.plate | Iterable[pyro.plate], new_dim: int
             for plate_ in plate:
                 stack.enter_context(change_pyro_plate_dim(plate_, new_dim))
             yield plate
-
-
-def building_docs() -> bool:
-    return "MOFAFLEX_DOCS" in os.environ
-
-
-def docstring_get_line_indentation(line: str):
-    for i, s in enumerate(line):
-        if not s.isspace():
-            return i
-    return np.inf
-
-
-def docstring_get_indentation(docstring: str):
-    if not docstring:
-        return 0
-    lines = docstring.expandtabs(4).splitlines()
-    min_indent = np.inf
-    for line in lines[1:]:
-        min_indent = builtins.min(min_indent, docstring_get_line_indentation(line))
-    return min_indent if np.isfinite(min_indent) else 0
 
 
 def pickle_torch_state(state: dict) -> NDArray[np.uint8]:
