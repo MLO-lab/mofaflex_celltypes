@@ -67,6 +67,7 @@ def pytest_pycollect_makeitem(collector, name, obj):
 
                     for item in collector.ihook.pytest_pycollect_makeitem(collector=collector, name=name, obj=cfunc):
                         item.name += f"[{baseline_image}]"
+                        item._nodeid += f"[{baseline_image}]"
                         item.obj = cfunc
                         item.own_markers = cfunc.pytestmark
                         items.append(item)
