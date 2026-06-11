@@ -7,6 +7,7 @@ from functools import reduce
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 from scipy.sparse import SparseEfficiencyWarning, csc_array, csc_matrix, csr_array, csr_matrix, issparse
 
@@ -223,6 +224,8 @@ def test_integration(
         assert model.n_informed_factors > 0
         assert model.terms["_"].n_informed_factors > 0
         assert model.n_informed_factors == model.terms["_"].n_informed_factors
+        assert "get_annotations" in dir(model)
+        assert all(isinstance(annot, pd.DataFrame) for annot in model.get_annotations().values())
     elif argname == "guiding_vars_obs_keys":
         assert model.n_guided_factors == model.terms["_"].n_guided_factors == 3
     else:
@@ -233,6 +236,9 @@ def test_integration(
             == model.terms["_"].n_total_factors
             == 5
         )
+        assert "get_annotations" not in dir(model)
+        with pytest.raises(AttributeError, match="is only available when using the 'InformedHorseshoe' prior"):
+            model.get_annotations()
 
     if fitargs.get("save_path") is not False:
         loaded_model = MOFAFLEX.load(path=next(iter(tmp_path.glob("*.h5"))))

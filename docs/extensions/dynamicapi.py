@@ -5,7 +5,7 @@ from pydocstring import Docstring, Parameter, Section, SectionKind, emit_google,
 
 import mofaflex as mfl
 from mofaflex._core.priors import APIType
-from mofaflex._core.terms import Term, MofaFlex
+from mofaflex._core.terms import MofaFlex
 from mofaflex._core.api import types
 
 
@@ -60,7 +60,6 @@ def setup(app):
                 if api.type == APIType.property and not api.has_factors:
                     desc = f".. important::\n   This property is only available when using the :class:`~.priors.{prior}` prior.\n\n{desc}"
 
-                    Term._api(MofaFlex, name)
                     setattr(getattr(mfl.priors, prior), name, getattr(priorcls, api.name))
                 else:
                     desc = f".. important::\n   This method is only available when using the :class:`~.priors.{prior}` prior.\n\n{desc}"
@@ -85,7 +84,6 @@ def setup(app):
                     update_wrapper(wrapper2, wrappedapi)
                     wrapper2.__doc__ = emit_google(doc)
                     setattr(getattr(mfl._core.api.priors, prior), name, wrapper2)
-                    Term._api(MofaFlex, name)
 
                 if len(desc) > 0:
                     doc.extended_summary = desc
@@ -114,7 +112,7 @@ def setup(app):
         wrapper = type(apiclsname, (), {"__module__": apicls.__module__, "__doc__": implcls.__doc__})
         wrapper.__init__ = implcls.__init__
         for api in implcls.api():
-            setattr(wrapper, api, getattr(implcls, api))
+            setattr(wrapper, api.name, getattr(implcls, api.name))
         setattr(mfl.terms, apiclsname, wrapper)
         setattr(types.terms, apiclsname, wrapper)
     types.terms.Term = None
@@ -125,6 +123,6 @@ def setup(app):
     ):
         implcls = getattr(mfl._core.likelihoods, apiclsname)
         for api in implcls.api():
-            setattr(apicls, api, getattr(implcls, api))
+            setattr(apicls, api.name, getattr(implcls, api.name))
         setattr(types.likelihoods, apiclsname, apicls)
     types.likelihoods.Likelihood = None

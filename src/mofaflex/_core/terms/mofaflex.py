@@ -900,6 +900,7 @@ def _init_api():
                     attr = property(make_dummy_function(name, prior, True))
                     attr.__doc__ = getattr(priorcls, api.name).__doc__
                     setattr(MofaFlex, name, attr)
+                    Term._api(MofaFlex, name, hidden=True)
                     continue
 
                 func = getattr(priorcls, api.name)
@@ -927,6 +928,7 @@ def _init_api():
                     wrapperfunc.__name__ = name
 
                 setattr(MofaFlex, name, wrapperfunc)
+                Term._api(MofaFlex, name, hidden=True)
 
             postprocess_method = priorcls.postprocess_results
             params = [
