@@ -257,8 +257,7 @@ class SpikeSlab(Prior):
         sparse_type: Literal["raw", "mix", "thresh"] = "mix",
         **kwargs,
     ) -> dict[str, NDArray[np.number]] | NDArray[np.number] | None:
-        """Args.
-
+        """Args:
         sparse_type: How to handle sparsity when using the spike and slab prior.
 
             - raw: Do nothing, return inferred values for all entries.
@@ -267,7 +266,7 @@ class SpikeSlab(Prior):
               inferred non-sparse value. The mixture is weighted by the inferred
               sparsity probability. This is what MOFA does.
             - thresh: Set all values with a sparsity probablity > 0.5 to 0.
-        """
+        """  # noqa: D205
         if name is not None:
             if name in self.names:
                 return self._postprocess_name(results, moment, name, sparse_type)

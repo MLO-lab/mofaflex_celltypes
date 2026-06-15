@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from itertools import chain
 from types import MethodType
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -19,6 +20,20 @@ class _class_and_instancemethod:
         return obj.__get__(instance, owner)
 
 
+@dataclass(kw_only=True, frozen=True)
+class DynamicAPI:
+    name: str
+    hidden: bool = False
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __eq__(self, other: str | DynamicAPI):
+        if isinstance(other, __class__):
+            other = other.name
+        return self.name == other
+
+
 class DynamicAPIMixin:
     """Mixin class for classes that define a subset of their API as user-facing.
 
@@ -27,28 +42,30 @@ class DynamicAPIMixin:
     be defined both at the class level as well as for individual instances.
     """
 
-    _apilist = []
+    _apiset = set()
 
     @_class_and_instancemethod
     def api(self) -> Iterable[str]:
         """The user-facing API of class / object."""
-        return self._apilist
+        return self._apiset
 
     @_class_and_instancemethod
-    def api_methods(self) -> Iterable[str]:
+    def api_methods(self) -> Iterable[DynamicAPI]:
         """The user-facing methods of this class / object."""
         obj = self.__class__ if isinstance(self, __class__) else self
-        return (api for api in self._apilist if not isinstance(getattr(obj, api, None), property))
+        return (api for api in self._apiset if not isinstance(getattr(obj, api.name, None), property))
 
     @_class_and_instancemethod
-    def api_properties(self) -> Iterable[str]:
+    def api_properties(self) -> Iterable[DynamicAPI]:
         """The user-facing properties of this class / object."""
         obj = self.__class__ if isinstance(self, __class__) else self
-        return (api for api in self._apilist if isinstance(getattr(obj, api, None), property))
+        return (api for api in self._apiset if isinstance(getattr(obj, api.name, None), property))
 
     def _api(
-        obj: Callable | property | DynamicAPIMixin | type[DynamicAPIMixin],
+        obj: Callable | property | DynamicAPIMixin | type[DynamicAPIMixin] | None,
         attr: MethodType | property | str | None = None,
+        *,
+        hidden: bool = False,
     ):
         """Mark a method or property as user-facing.
 
@@ -85,9 +102,11 @@ class DynamicAPIMixin:
         """
 
         def _add_api(owner, api: str):
-            if "_apilist" not in owner.__dict__:
-                owner._apilist = owner._apilist.copy()
-            owner._apilist.append(api)
+            if "_apiset" not in owner.__dict__:
+                owner._apiset = owner._apiset.copy()
+            api = DynamicAPI(name=api, hidden=hidden)
+            owner._apiset.discard(api)
+            owner._apiset.add(api)
 
         class __api:
             def __new__(cls, func: Callable | MethodType | property):
@@ -98,6 +117,7 @@ class DynamicAPIMixin:
                     return super().__new__(cls)
 
             def __init__(self, func: Callable | property):
+                self._hidden = hidden
                 self._func = func
                 if isinstance(func, property):
                     self.setter = self._setter
@@ -115,7 +135,9 @@ class DynamicAPIMixin:
                 self._func = self._func.deleter(func)
                 return self
 
-        if isinstance(obj, Callable | property) and not isinstance(obj, __class__) and not isinstance(obj, type):
+        if obj is None:
+            return __api
+        elif isinstance(obj, Callable | property) and not isinstance(obj, __class__) and not isinstance(obj, type):
             return __api(obj)
         elif isinstance(attr, MethodType):
             return __api(attr)
@@ -142,11 +164,8 @@ class DynamicAPIWrapper(Generic[T]):
         self._forward = forward
 
     def __dir__(self, forward: bool | None = None):
-        return (
-            chain(self._model.__dir__(), self._wrapped.api())
-            if forward or forward is None and self._forward
-            else self._wrapped.api()
-        )
+        apis = (api.name for api in self._wrapped.api() if not api.hidden)
+        return chain(self._model.__dir__(), apis) if forward or forward is None and self._forward else apis
 
     def __getattr__(self, name, forward: bool | None = None):
         err = AttributeError(
