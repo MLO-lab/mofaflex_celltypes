@@ -4,7 +4,7 @@ from functools import update_wrapper
 from pydocstring import Docstring, Parameter, Section, SectionKind, emit_google, parse_google
 
 import mofaflex as mfl
-from mofaflex._core.priors import APIType
+from mofaflex._core.api.utils import APIType
 from mofaflex._core.terms import MofaFlex
 from mofaflex._core.api import types
 

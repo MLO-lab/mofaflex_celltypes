@@ -26,7 +26,7 @@ class R2(NamedTuple):
 @checked_baseclass(
     required_init_args=("view_name", "data", "nonnegative"), required_attributes="_priority", registry="dict"
 )
-class Likelihood(SaveStateMixin, DynamicAPIMixin, ABC):
+class Likelihood(DynamicAPIMixin, SaveStateMixin, ABC):
     """Base class for MOFA-FLEX likelihoods.
 
     Subclasses must contain the `priority` attribute, which is used during likelihood inference to return the

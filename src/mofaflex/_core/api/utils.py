@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from enum import Enum, auto
+from functools import partial
 from itertools import chain
 from types import MethodType
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Self, TypeVar
 
 if TYPE_CHECKING:
     from .mofaflex import MOFAFLEX
@@ -20,10 +22,23 @@ class _class_and_instancemethod:
         return obj.__get__(instance, owner)
 
 
+class APIType(Enum):
+    method = auto()
+    property = auto()
+
+
 @dataclass(kw_only=True, frozen=True)
 class DynamicAPI:
+    """Description of a user-facing API attribute."""
+
     name: str
+    """The name of the attribute."""
+
+    type: APIType
+    """The type of the attribute (method or property)."""
+
     hidden: bool = False
+    """Whether the attribute is hidden. Hidden attributes are not listed by `dir()`, but can still be accessed."""
 
     def __hash__(self):
         return hash(self.name)
@@ -34,6 +49,37 @@ class DynamicAPI:
         return self.name == other
 
 
+class DynamicAPIDecorator:
+    @staticmethod
+    def add_api(owner, api: str, type, **kwargs):
+        if "__dynamicapi_apiset__" not in owner.__dict__:
+            owner.__dynamicapi_apiset__ = owner.__dynamicapi_apiset__.copy()
+        api = owner.__dynamicapi_apicls__(name=api, type=type, **kwargs)
+        owner.__dynamicapi_apiset__.discard(api)
+        owner.__dynamicapi_apiset__.add(api)
+
+    def __init__(self, func: Callable | property, **kwargs):
+        self._func = func
+        self._kwargs = kwargs
+        if isinstance(func, property):
+            self.setter = self._setter
+            self.deleter = self._deleter
+
+    def __set_name__(self, owner, name: str):
+        self.add_api(
+            owner, name, APIType.property if isinstance(self._func, property) else APIType.method, **self._kwargs
+        )
+        setattr(owner, name, self._func)
+
+    def _setter(self, func):
+        self._func = self._func.setter(func)
+        return self
+
+    def _deleter(self, func):
+        self._func = self._func.deleter(func)
+        return self
+
+
 class DynamicAPIMixin:
     """Mixin class for classes that define a subset of their API as user-facing.
 
@@ -42,31 +88,40 @@ class DynamicAPIMixin:
     be defined both at the class level as well as for individual instances.
     """
 
-    _apiset = set()
+    __dynamicapi_apiset__ = set()
+    __dynamicapi_apicls__ = DynamicAPI
+    __dynamicapi_decorator_cls__ = DynamicAPIDecorator
+
+    def __init_subclass__(
+        subcls,
+        *,
+        dynapi_cls: type[DynamicAPI] | None = None,
+        dynapi_decorator_cls: type[DynamicAPIDecorator] | None = None,
+        **kwargs,
+    ):
+        super().__init_subclass__(**kwargs)
+        if dynapi_cls is not None:
+            subcls.__dynamicapi_apicls__ = dynapi_cls
+        if dynapi_decorator_cls is not None:
+            subcls.__dynamicapi_decorator_cls__ = dynapi_decorator_cls
 
     @_class_and_instancemethod
     def api(self) -> Iterable[str]:
         """The user-facing API of class / object."""
-        return self._apiset
+        return self.__dynamicapi_apiset__
 
     @_class_and_instancemethod
     def api_methods(self) -> Iterable[DynamicAPI]:
         """The user-facing methods of this class / object."""
-        obj = self.__class__ if isinstance(self, __class__) else self
-        return (api for api in self._apiset if not isinstance(getattr(obj, api.name, None), property))
+        return (api for api in self.__dynamicapi_apiset__ if api.type == APIType.method)
 
     @_class_and_instancemethod
     def api_properties(self) -> Iterable[DynamicAPI]:
         """The user-facing properties of this class / object."""
-        obj = self.__class__ if isinstance(self, __class__) else self
-        return (api for api in self._apiset if isinstance(getattr(obj, api.name, None), property))
+        return (api for api in self.__dynamicapi_apiset__ if api.type == APIType.property)
 
-    def _api(
-        obj: Callable | property | DynamicAPIMixin | type[DynamicAPIMixin] | None,
-        attr: MethodType | property | str | None = None,
-        *,
-        hidden: bool = False,
-    ):
+    @_class_and_instancemethod
+    def _api(self: type[Self], obj: Callable | MethodType | property | str | None = None, **kwargs):
         """Mark a method or property as user-facing.
 
         Subclasses can use this to expose properties or methods to the end user.
@@ -100,51 +155,26 @@ class DynamicAPIMixin:
             >>> def foobar(self, *args):
             ...     self._api(self.baz)
         """
-
-        def _add_api(owner, api: str):
-            if "_apiset" not in owner.__dict__:
-                owner._apiset = owner._apiset.copy()
-            api = DynamicAPI(name=api, hidden=hidden)
-            owner._apiset.discard(api)
-            owner._apiset.add(api)
-
-        class __api:
-            def __new__(cls, func: Callable | MethodType | property):
-                if isinstance(func, MethodType):
-                    _add_api(func.__self__, func.__name__)
-                    return None
-                else:
-                    return super().__new__(cls)
-
-            def __init__(self, func: Callable | property):
-                self._hidden = hidden
-                self._func = func
-                if isinstance(func, property):
-                    self.setter = self._setter
-                    self.deleter = self._deleter
-
-            def __set_name__(self, owner, name: str):
-                _add_api(owner, name)
-                setattr(owner, name, self._func)
-
-            def _setter(self, func):
-                self._func = self._func.setter(func)
-                return self
-
-            def _deleter(self, func):
-                self._func = self._func.deleter(func)
-                return self
-
-        if obj is None:
-            return __api
-        elif isinstance(obj, Callable | property) and not isinstance(obj, __class__) and not isinstance(obj, type):
-            return __api(obj)
-        elif isinstance(attr, MethodType):
-            return __api(attr)
-        elif attr is None:
-            raise ValueError("Need attr if invoked on a DynamicAPIMixin instance.")
-        _add_api(obj, attr)
-        return obj
+        if isinstance(self, type) and issubclass(self, __class__) and obj is None:
+            return partial(self._api, **kwargs)
+        elif isinstance(self, type) and issubclass(self, __class__) and isinstance(obj, Callable | property):
+            return self.__dynamicapi_decorator_cls__(obj, **kwargs)
+        elif isinstance(self, __class__) and isinstance(obj, MethodType):
+            self.__dynamicapi_decorator_cls__.add_api(obj.__self__, obj.__name__, APIType.method, **kwargs)
+            return None
+        elif isinstance(obj, str):
+            cls = self.__class__ if isinstance(self, __class__) else self
+            type_ = APIType.method
+            try:
+                if isinstance(getattr(cls, obj), property):
+                    type_ = APIType.property
+            except AttributeError:
+                if not isinstance(getattr(self, obj), MethodType):
+                    type_ = APIType.property
+            self.__dynamicapi_decorator_cls__.add_api(self, obj, type_, **kwargs)
+            return None
+        else:
+            raise TypeError("Unknown argument type for 'obj'")
 
 
 T = TypeVar("T", bound=DynamicAPIMixin)
