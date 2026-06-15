@@ -18,7 +18,7 @@ from ..utils import MeanStd, PyroParameterDict
 from .base import Prior
 
 
-class GSFA(Prior):
+class GSFA(Prior, weights=False):
     """Guided sparse factor analysis prior for CRISPR perturbation screens.
 
     Args:
@@ -26,7 +26,6 @@ class GSFA(Prior):
         s_b: The $s_b$ parameter for the hyperprior on the non-zero probability.
     """
 
-    _weights = False
     _state_attrs = ("_targets_obsm_key", "_s_b", "_targets", "_probabilities", "_precisions", "_beta")
 
     def __init__(self, names: str | Sequence[str], targets_obsm_key: str, s_b: float = 20):

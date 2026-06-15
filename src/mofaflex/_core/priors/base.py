@@ -89,10 +89,12 @@ class Prior(
     _apilist = []
     _state_attrs = "_names"
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, *, factors: bool = True, weights: bool = True, **kwargs):
         if not isabstract(cls) and cls.__name__[0] != "_":
-            if not cls.factors_allowed() and not cls.weights_allowed():
+            if not factors and not weights:
                 raise TypeError(f"Class `{cls.__name__}` cannot be used for factors or weights.")
+        cls.__prior_factors_allowed__ = factors
+        cls.__prior_weights_allowed__ = weights
         super().__init_subclass__(**kwargs)
 
     def __init__(self, names: str | Sequence[str]):
@@ -102,12 +104,12 @@ class Prior(
     @classmethod
     def factors_allowed(cls):
         """`True` if this prior can be used for factors."""
-        return getattr(cls, "_factors", True)
+        return cls.__prior_factors_allowed__
 
     @classmethod
     def weights_allowed(cls):
         """`True` if this prior can be used for weights."""
-        return getattr(cls, "_weights", True)
+        return cls.__prior_weights_allowed__
 
     @property
     def names(self) -> tuple[str]:

@@ -67,9 +67,13 @@ def checked_baseclass(
         subinitcls = cls.__dict__.get("__init_subclass__", None)
 
         def init_subclass(subcls, **kwargs):
-            super(cls).__init_subclass__(**kwargs)
             if subinitcls is not None:
                 subinitcls.__get__(subcls, subcls)(**kwargs)
+            else:
+                try:
+                    super(cls).__init_subclass__(**kwargs)
+                except TypeError():
+                    super(cls).__init_subclass__()
             if not isabstract(subcls) and subcls.__name__[0] != "_":
                 init_sig = signature(subcls.__init__)
                 for i, (required_arg, param) in enumerate(
