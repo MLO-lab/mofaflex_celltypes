@@ -16,7 +16,7 @@ from ..utils import PyroMeta, SaveStateMixin, checked_baseclass
 
 
 @checked_baseclass(registry="dict")
-class Term(SaveStateMixin, DynamicAPIMixin, ABC, PyroModule, metaclass=PyroMeta):
+class Term(DynamicAPIMixin, SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
     r"""Base class for MOFA-FLEX additive terms.
 
     A Term represents one additive contribution to the generative model, i.e. a component of the form:

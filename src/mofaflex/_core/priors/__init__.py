@@ -1,6 +1,6 @@
 from typing import Literal, TypeAlias
 
-from .base import API, APIType, Prior
+from .base import Prior, PriorDynamicAPI
 from .constant import Constant
 from .gaussian_process import GaussianProcess
 from .gsfa import GSFA

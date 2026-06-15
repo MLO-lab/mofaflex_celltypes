@@ -136,7 +136,7 @@ class Horseshoe(Prior):
         return posteriors
 
 
-class InformedHorseshoe(Horseshoe):
+class InformedHorseshoe(Horseshoe, factors=False):
     """Horseshoe prior with domain knowledge.
 
     Args:
@@ -146,8 +146,6 @@ class InformedHorseshoe(Horseshoe):
             training, while larger values encourage the model to more closely adhere to the provided annotations.
     """
 
-    _factors = False
-    _weights = True
     _state_attrs = (
         "_annotation_confidence",
         "_annotations_varm_key",

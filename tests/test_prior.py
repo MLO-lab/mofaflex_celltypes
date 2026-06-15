@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from mofaflex._core.priors import APIType, Normal, Prior
+from mofaflex._core.api.utils import APIType
+from mofaflex._core.priors import Normal, Prior
 from mofaflex._core.terms import MofaFlex, mofaflex
 from mofaflex._core.utils import MeanStd
 

@@ -23,9 +23,10 @@ from scipy.sparse import issparse
 from sklearn.decomposition import NMF, PCA
 
 from ..api import priors as apipriors
+from ..api.utils import APIType
 from ..datasets import CovariatesDataset, MofaFlexDataset, StackDataset, df_to_array, merge_covariates
 from ..likelihoods.pyro import Likelihood
-from ..priors import API, APIType, FactorPriorType, Prior, WeightPriorType
+from ..priors import FactorPriorType, Prior, PriorDynamicAPI, WeightPriorType
 from ..utils import MeanStd, PyroModuleDict, PyroParameterDict, change_pyro_plate_dim, default_torch_device
 from .base import Term
 
@@ -133,7 +134,7 @@ class MofaFlex(Term):
             )
         return ret
 
-    def _wrap_api_method(self, axis: Literal[0, 1], prior: Prior, api: API):
+    def _wrap_api_method(self, axis: Literal[0, 1], prior: Prior, api: PriorDynamicAPI):
         def wrapper_func(self, *args, **kwargs):
             with torch.device(self._device):
                 ret = getattr(prior, api.name)
@@ -900,7 +901,7 @@ def _init_api():
                     attr = property(make_dummy_function(name, prior, True))
                     attr.__doc__ = getattr(priorcls, api.name).__doc__
                     setattr(MofaFlex, name, attr)
-                    Term._api(MofaFlex, name, hidden=True)
+                    MofaFlex._api(name, hidden=True)
                     continue
 
                 func = getattr(priorcls, api.name)
@@ -928,7 +929,7 @@ def _init_api():
                     wrapperfunc.__name__ = name
 
                 setattr(MofaFlex, name, wrapperfunc)
-                Term._api(MofaFlex, name, hidden=True)
+                MofaFlex._api(name, hidden=True)
 
             postprocess_method = priorcls.postprocess_results
             params = [

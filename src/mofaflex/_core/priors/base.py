@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from enum import Enum, auto
+from dataclasses import dataclass
 from inspect import isabstract
 from types import MappingProxyType
-from typing import Literal, NamedTuple
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -12,35 +12,39 @@ import torch
 from numpy.typing import NDArray
 from pyro.nn import PyroModule, pyro_method
 
+from ..api.utils import DynamicAPI, DynamicAPIDecorator, DynamicAPIMixin
 from ..datasets import MofaFlexDataset
 from ..utils import MeanStd, PyroMeta, SaveStateMixin, checked_baseclass
 
 
-class APIType(Enum):
-    method = auto()
-    property = auto()
-
-
-class API(NamedTuple):
-    """Description of a user-facing API attribute."""
-
-    name: str
-    """The name of the attribute."""
-
-    type: APIType
-    """The type of the attribute (method or property)."""
-
+@dataclass(kw_only=True, frozen=True)
+class PriorDynamicAPI(DynamicAPI):
     has_factors: bool
     """Whether this attribute returns a dict of dataframes with factors."""
 
-    factors_subset: str | None
+    factors_subset: str | None = None
     """Which property of the object to which this API attribute belongs to query for the subset of factors returned
     by this attribute. Will only be used if `had_factors=True`. If `None`, it is assumed that this attribute returns
     all factors. The property must return a slice or a sequence of indices."""
 
 
+class _PriorDynamicAPIDecorator(DynamicAPIDecorator):
+    def __init__(self, func: Callable | property, **kwargs):
+        if "has_factors" not in kwargs:
+            kwargs["has_factors"] = not isinstance(func, property)
+        super().__init__(func, **kwargs)
+
+
 @checked_baseclass(required_init_args=("names"), registry="dict")
-class Prior(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
+class Prior(
+    DynamicAPIMixin,
+    SaveStateMixin,
+    ABC,
+    PyroModule,
+    metaclass=PyroMeta,
+    dynapi_cls=PriorDynamicAPI,
+    dynapi_decorator_cls=_PriorDynamicAPIDecorator,
+):
     """Base class for MOFA-FLEX factors and weights priors.
 
     Subclasses can eiher implement `_model` and `_guide`, or reimplment `model` and `guide`. The former set of methods
@@ -53,12 +57,30 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
     This base class provides default behavior for simple usecases, Subclasses can reimplement any combination of
     methods to customize aspects. Subclasses can also contain two boolean attributs:
 
-        - `_factors`: Indicates whether the subclass is suitable for factors.
-        - `_weights`: Indicates whether the subclass is suitable for weights.
+    - `_factors`: Indicates whether the subclass is suitable for factors.
+    - `_weights`: Indicates whether the subclass is suitable for weights.
 
     By default, it is assumed that a subclass is suitable for both factors and weights. Generally, specifying these attributes
     should only be necessary if a prior is not suitable for either factors or weights and no wrapper class in _core/priors
     exists.
+
+    Subclasses can use this to expose properties or methods to the end user through the main model class.
+    If a prior can be used for both factors and weights, the method or property name should contain `a̲x̲i̲s̲`
+    (that is the word `axis` with each letter followed by the unicode character U+0332 COMBINING LOW LINE).
+    The user-facing method/property will have this replaced by `factor` or `weight` as appropriate.
+
+    Subclasses can use the `Prior._api` decorator to mark a method or property as user-facing. The decorator accepts
+    two keyword arguments:
+
+    - has_factors: Whether the method/property returns a dict of dataframes with factors. If `True`,
+      the user-facing method will have an additional argument `ordered`, which affects whether
+      the factors in the dataframes will be ordered by explained variance or not. For this to work,
+      the factors must be in the columns. Defaults to `True` for methods and `False` for properties.
+      A property with `has_factors=True` will be wrapped in a getter method.
+    - factors_subset: Name of a property of the subclass that returns something that can be used to index a list
+      or NumPy array. If `has_factors=True` and the decorated method returns only a subset of factors, this
+      property must return the indices of the factors returned by the decorated method. Ignored with
+      `has_factors=False`.
 
     Args:
         names: The names of the groups/views that the prior is responsible for.
@@ -67,10 +89,13 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
     _apilist = []
     _state_attrs = "_names"
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, *, factors: bool = True, weights: bool = True, **kwargs):
         if not isabstract(cls) and cls.__name__[0] != "_":
-            if not cls.factors_allowed() and not cls.weights_allowed():
+            if not factors and not weights:
                 raise TypeError(f"Class `{cls.__name__}` cannot be used for factors or weights.")
+        cls.__prior_factors_allowed__ = factors
+        cls.__prior_weights_allowed__ = weights
+        super().__init_subclass__(**kwargs)
 
     def __init__(self, names: str | Sequence[str]):
         super().__init__()
@@ -79,84 +104,17 @@ class Prior(SaveStateMixin, ABC, PyroModule, metaclass=PyroMeta):
     @classmethod
     def factors_allowed(cls):
         """`True` if this prior can be used for factors."""
-        return getattr(cls, "_factors", True)
+        return cls.__prior_factors_allowed__
 
     @classmethod
     def weights_allowed(cls):
         """`True` if this prior can be used for weights."""
-        return getattr(cls, "_weights", True)
+        return cls.__prior_weights_allowed__
 
     @property
     def names(self) -> tuple[str]:
         """The names of the groups/views that the prior is responsible for."""
         return self._names
-
-    @staticmethod
-    def _api(  # noqa: D417
-        obj: Callable | property | None = None, *, has_factors: bool | None = None, factors_subset: str | None = None
-    ):
-        """Mark a method or property as user-facing.
-
-        Subclasses can use this to expose properties or methods to the end user through the main model class.
-        If a prior can be used for both factors and weights, the method or property name should contain `a̲x̲i̲s̲`
-        (that is the word `axis` with each letter followed by the unicode character U+0332 COMBINING LOW LINE).
-        The user-facing method/property will have this replaced by `factor` or `weight` as appropriate.
-
-        Args:
-            has_factors: Whether the method/property returns a dict of dataframes with factors. If `True`,
-                the user-facing method will have an additional argument `ordered`, which affects whether
-                the factors in the dataframes will be ordered by explained variance or not. For this to work,
-                the factors must be in the columns. Defaults to `True` for methods and `False` for properties.
-                A property with `has_factors=True` will be wrapped in a getter method.
-            factors_subset: Name of a property of the subclass that returns something that can be used to index a list
-                or NumPy array. If `has_factors=True` and the decorated method returns only a subset of factors, this
-                property must return the indices of the factors returned by the decorated method. Ignored with
-                `has_factors=False`.
-        """
-
-        class __api:
-            @staticmethod
-            def _add_api(owner, api: API):
-                if "_apilist" not in owner.__dict__:
-                    owner._apilist = owner._apilist.copy()
-                owner._apilist.append(api)
-
-            def __init__(self, func: Callable | property):
-                self._func = func
-
-            def __set_name__(self, owner, name: str):
-                if isinstance(self._func, Callable):
-                    self._add_api(
-                        owner,
-                        API(name, APIType.method, has_factors if has_factors is not None else True, factors_subset),
-                    )
-                else:
-                    self._add_api(
-                        owner,
-                        API(name, APIType.property, has_factors if has_factors is not None else False, factors_subset),
-                    )
-                    self._func.__set_name__(owner, name)
-                setattr(owner, name, self._func)
-
-        if obj is not None:
-            return __api(obj)
-        else:
-            return __api
-
-    @classmethod
-    def api(cls) -> Sequence[API]:
-        """The user-facing API of this prior."""
-        return cls._apilist
-
-    @classmethod
-    def api_methods(cls) -> Iterable[API]:
-        """The user-facing methods of this prior."""
-        return (api for api in cls._apilist if api.type == APIType.method)
-
-    @classmethod
-    def api_properties(cls) -> Iterable[API]:
-        """The user-facing properties of this prior."""
-        return (api for api in cls._apilist if api.type == APIType.property)
 
     def get_datasets(
         self, data: MofaFlexDataset, axis: Literal[0, 1], n_factors: int, n_nonfactors: Mapping[str, int]
