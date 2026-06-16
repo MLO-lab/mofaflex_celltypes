@@ -55,14 +55,13 @@ class Prior(
     Subclasses must also implement the `posterior` property to get the summary statistics of the posterior distribution.
 
     This base class provides default behavior for simple usecases, Subclasses can reimplement any combination of
-    methods to customize aspects. Subclasses can also contain two boolean attributs:
+    methods to customize aspects. Subclasses can pass two boolean keyword class arguments:
 
-    - `_factors`: Indicates whether the subclass is suitable for factors.
-    - `_weights`: Indicates whether the subclass is suitable for weights.
+    - `factors`: Indicates whether the subclass is suitable for factors.
+    - `weights`: Indicates whether the subclass is suitable for weights.
 
-    By default, it is assumed that a subclass is suitable for both factors and weights. Generally, specifying these attributes
-    should only be necessary if a prior is not suitable for either factors or weights and no wrapper class in _core/priors
-    exists.
+    By default, it is assumed that a subclass is suitable for both factors and weights. Generally, specifying these arguments
+    should only be necessary if a prior is not suitable for either factors or weights.
 
     Subclasses can use this to expose properties or methods to the end user through the main model class.
     If a prior can be used for both factors and weights, the method or property name should contain `a̲x̲i̲s̲`
